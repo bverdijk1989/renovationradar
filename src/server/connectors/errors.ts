@@ -50,3 +50,8 @@ export class ParseError extends ConnectorError {
 export class NotImplementedError extends ConnectorError {
   readonly code = "not_implemented";
 }
+
+/** CrawlJob row vanished between enqueue and run (deleted, race condition). */
+export class JobNotFoundError extends ConnectorError {
+  readonly code = "job_not_found";
+}

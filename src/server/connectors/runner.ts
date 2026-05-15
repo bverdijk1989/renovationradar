@@ -4,6 +4,7 @@ import { Prisma, type CrawlJob, type SearchProfile, type Source } from "@prisma/
 import { prisma } from "@/lib/db";
 import {
   ConnectorError,
+  JobNotFoundError,
   LegalGateError,
   NoConnectorError,
   SourceValidationError,
@@ -58,7 +59,7 @@ export async function runConnectorJob(
     include: { source: true, searchProfile: true },
   });
   if (!job) {
-    throw new ConnectorError(`CrawlJob ${jobId} not found`) as unknown as Error;
+    throw new JobNotFoundError(`CrawlJob ${jobId} not found`);
   }
 
   // Tolerate `queued` and re-runs of already-`running` jobs (worker crash recovery).
