@@ -1,4 +1,5 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { DEFAULT_CRITERIA } from "@/lib/listings/criteria";
 
@@ -12,12 +13,12 @@ import { DEFAULT_CRITERIA } from "@/lib/listings/criteria";
 const MATCH_WHERE = {
   priceEur: { lte: DEFAULT_CRITERIA.maxPriceEur },
   landAreaM2: { gte: DEFAULT_CRITERIA.minLandM2 },
-  isDetached: "yes" as const,
-  availability: { in: ["for_sale", "under_offer", "unknown"] as const },
+  isDetached: "yes",
+  availability: { in: ["for_sale", "under_offer", "unknown"] },
   location: {
     is: { distanceFromVenloKm: { lte: DEFAULT_CRITERIA.maxDistanceKm } },
   },
-};
+} satisfies Prisma.NormalizedListingWhereInput;
 
 export type DashboardKpis = {
   newToday: number;
@@ -78,10 +79,10 @@ const TOP_INCLUDE = {
   agency: { select: { id: true, name: true } },
   media: {
     take: 1,
-    orderBy: { sortOrder: "asc" as const },
+    orderBy: { sortOrder: "asc" },
     select: { id: true, url: true, caption: true },
   },
-};
+} satisfies Prisma.NormalizedListingInclude;
 
 export async function getTopMatches(take = 10) {
   return prisma.normalizedListing.findMany({
