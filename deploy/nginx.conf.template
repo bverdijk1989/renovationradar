@@ -1,0 +1,52 @@
+# =============================================================================
+# Renovation Radar EU — nginx vhost
+# =============================================================================
+# Placeholders __DOMAIN__ + __PORT__ worden door server-setup.sh ingevuld.
+# Certbot voegt na de Let's Encrypt-stap automatisch SSL-blokken toe.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    # Logs in een eigen bestand zodat ze niet mengen met andere apps.
+    access_log /var/log/nginx/renovationradar.access.log;
+    error_log  /var/log/nginx/renovationradar.error.log;
+
+    # Health-check eindpunt zonder rate limit (handig voor uptime monitors).
+    location = /health {
+        proxy_pass http://127.0.0.1:__PORT__/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # Next.js statische assets — agressieve cache.
+    location /_next/static/ {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    # Alles anders → Next.js server (SSR + API routes).
+    location / {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+        client_max_body_size 10m;
+    }
+
+    # Beveiligingsheaders — werken naast certbot's SSL-config.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+}

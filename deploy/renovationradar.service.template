@@ -1,0 +1,30 @@
+[Unit]
+Description=Renovation Radar EU (Next.js)
+Documentation=https://github.com/bverdijk1989/renovationradar
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__APP_DIR__/.env
+Environment=NODE_ENV=production
+Environment=PORT=__PORT__
+ExecStart=/usr/bin/pnpm start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=__APP_DIR__/.next __APP_DIR__/node_modules/.cache
+
+[Install]
+WantedBy=multi-user.target

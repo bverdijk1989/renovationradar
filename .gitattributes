@@ -1,0 +1,29 @@
+# Standaard: tekstbestanden krijgen LF in de repo + native line endings in
+# de working tree (CRLF op Windows). Voor élk bestand dat op een Linux
+# server moet draaien: forceer LF zodat shell-scripts + systemd-units niet
+# breken op CRLF.
+
+* text=auto eol=lf
+
+# Shell scripts MOETEN LF zijn — anders breekt `#!/usr/bin/env bash` op Linux.
+*.sh        text eol=lf
+*.bash      text eol=lf
+
+# Systemd / nginx config zijn ook strikt LF.
+*.service           text eol=lf
+*.service.template  text eol=lf
+*.conf              text eol=lf
+*.conf.template     text eol=lf
+
+# SQL en yaml: LF.
+*.sql       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Binaries — geen line-ending magic.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
