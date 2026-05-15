@@ -24,7 +24,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=__APP_DIR__/.next __APP_DIR__/node_modules/.cache
+# Alleen .next hoeft writable te zijn voor runtime (Next.js schrijft daar
+# zijn dynamic-routes manifest en build-trace cache). node_modules/.cache
+# is een build-time pad (swc/webpack) en mag read-only blijven onder
+# ProtectSystem=full.
+ReadWritePaths=__APP_DIR__/.next
 
 [Install]
 WantedBy=multi-user.target
