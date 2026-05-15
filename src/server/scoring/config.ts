@@ -145,7 +145,7 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = Object.freeze({
     other: 70,
   },
 
-  heritagePropertyTypes: ["farmhouse", "longere", "manor", "mansion"],
+  heritagePropertyTypes: ["farmhouse", "longere", "manor", "mansion"] satisfies PropertyType[],
   heritagePropertyBonus: 40,
 
   scorerVersion: "v2",
