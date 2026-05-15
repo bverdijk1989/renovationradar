@@ -40,7 +40,11 @@ log "Git pull origin/${BRANCH}…"
 sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && git fetch origin && git reset --hard origin/${BRANCH}"
 
 log "pnpm install…"
-sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm install --frozen-lockfile=false"
+sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm install --no-frozen-lockfile" \
+  || warn "pnpm install gaf non-zero exit — vaak alleen ignored-builds, rebuild volgt."
+
+sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm rebuild @prisma/client @prisma/engines prisma esbuild" \
+  || warn "pnpm rebuild faalde — generate hieronder doet vaak zijn eigen download."
 
 sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma generate"
 

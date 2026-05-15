@@ -1,0 +1,22 @@
+# pnpm v9+ heeft strikt-default "geen postinstall scripts uitvoeren" gemaakt.
+# We staan de minimale set echte postinstalls toe die we vertrouwen:
+#   - prisma + @prisma/* — downloaden Prisma's engines binaries
+#   - esbuild — download platform-specifieke binary (Next.js bundler)
+#   - msgpackr-extract — native addon
+#   - unrs-resolver — native addon (Next.js/Tailwind resolver)
+#
+# pnpm v10 leest deze sleutel ook ipv package.json#pnpm.onlyBuiltDependencies.
+#
+# packages: ["."] vertelt pnpm dat dit een single-package project is — zonder
+# deze regel klaagt pnpm in sommige versies "packages field missing or empty".
+
+packages:
+  - .
+
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - esbuild
+  - msgpackr-extract
+  - unrs-resolver

@@ -216,7 +216,16 @@ fi
 
 # ---------- 10. App bouwen ---------------------------------------------------
 log "pnpm install (production deps + dev voor build)…"
-sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm install --frozen-lockfile=false"
+# pnpm v9+ verwerpt postinstall scripts default — pnpm-workspace.yaml's
+# onlyBuiltDependencies lijst whitelist'd ze. Mocht pnpm alsnog non-zero
+# exiten met een ignored-builds waarschuwing, gaan we door naar de
+# rebuild stap die de buildscripts expliciet draait.
+sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm install --no-frozen-lockfile" \
+  || warn "pnpm install gaf non-zero exit — vaak alleen een ignored-builds waarschuwing. rebuild volgt."
+
+log "pnpm rebuild voor packages met native binaries (Prisma engines, esbuild)…"
+sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm rebuild @prisma/client @prisma/engines prisma esbuild" \
+  || warn "pnpm rebuild faalde — Prisma generate hieronder doet vaak zijn eigen engine download."
 
 log "Prisma generate + migrate deploy…"
 sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma generate && pnpm prisma migrate deploy"
