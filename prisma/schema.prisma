@@ -1,0 +1,1010 @@
+// =============================================================================
+// Renovation Radar EU - Prisma schema (v2)
+// =============================================================================
+// PostgreSQL 16 + PostGIS 3.x + (later) pgvector.
+//
+// Conventions:
+//   - All primary keys are UUID v7 (time-ordered → better B-tree locality).
+//   - All tables have created_at / updated_at where mutability is expected.
+//   - Snake_case at the DB layer (@map / @@map), camelCase in the client.
+//   - PostGIS specifics live in prisma/sql/postgis_setup.sql because Prisma's
+//     diff engine does not understand triggers, GiST indexes or pgvector.
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // pgvector listed but unused yet; safe to add once the extension is installed.
+  extensions = [postgis, pg_trgm, citext, pgcrypto]
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum Country {
+  FR
+  BE
+  DE
+  NL
+}
+
+enum Language {
+  fr
+  nl
+  de
+  en
+}
+
+enum UserRole {
+  admin
+  user
+}
+
+// --- Source registry --------------------------------------------------------
+
+enum SourceType {
+  api
+  rss
+  sitemap
+  manual
+  email
+  scrape
+}
+
+enum CollectionMethod {
+  api
+  rss
+  sitemap
+  manual_entry
+  email_inbox
+  scrape_with_permission
+}
+
+enum SourceStatus {
+  active
+  paused
+  blocked
+  retired
+  pending_review
+}
+
+enum RobotsStatus {
+  allows
+  disallows
+  partial
+  not_applicable
+  unknown
+}
+
+enum TermsStatus {
+  allows
+  prohibits
+  unclear
+  custom_agreement
+  not_applicable
+  unknown
+}
+
+enum LegalStatus {
+  green
+  amber
+  red
+  pending_review
+}
+
+// --- Property & listing -----------------------------------------------------
+
+enum PropertyType {
+  detached_house
+  farmhouse
+  longere
+  manor
+  mansion
+  barn
+  ruin
+  mill
+  watermill
+  station_building
+  lock_keeper_house
+  level_crossing_house
+  lighthouse
+  chapel
+  monastery
+  other
+  unknown
+}
+
+enum SpecialObjectType {
+  mill
+  watermill
+  station_building
+  lock_keeper_house
+  level_crossing_house
+  lighthouse
+  chapel
+  monastery
+  other
+}
+
+enum RenovationStatus {
+  ruin
+  needs_renovation
+  partial_renovation
+  move_in_ready
+  unknown
+}
+
+enum TernaryFlag {
+  yes
+  no
+  unknown
+}
+
+enum UtilityStatus {
+  present
+  likely
+  absent
+  unknown
+}
+
+enum EnergyClass {
+  A_PLUS
+  A
+  B
+  C
+  D
+  E
+  F
+  G
+  unknown
+}
+
+/// Real-world market state of the listing (not the internal pipeline state).
+enum ListingAvailability {
+  for_sale
+  under_offer
+  sold
+  withdrawn
+  unknown
+}
+
+/// Internal processing pipeline state.
+enum ProcessingStatus {
+  raw
+  normalized
+  geocoded
+  scored
+  ready
+  error
+}
+
+// --- Media & features -------------------------------------------------------
+
+enum MediaType {
+  image
+  video
+  floor_plan
+  virtual_tour
+  document
+}
+
+/// Provenance of an extracted feature (drives data_confidence).
+enum FeatureSource {
+  source_data
+  extracted_text
+  llm
+  manual
+}
+
+// --- Crawl jobs -------------------------------------------------------------
+
+enum CrawlJobStatus {
+  queued
+  running
+  succeeded
+  failed
+  partial
+  cancelled
+}
+
+// --- Review queue & alerts --------------------------------------------------
+
+enum ReviewReason {
+  low_confidence
+  geocoding_failed
+  translation_failed
+  ambiguous_property_type
+  ambiguous_special_object
+  price_outlier
+  duplicate_suspected
+  manual_flag
+}
+
+enum ReviewStatus {
+  pending
+  approved
+  rejected
+  needs_more_info
+}
+
+enum AlertChannel {
+  email
+  web_push
+  in_app
+  webhook
+}
+
+/// What kind of listing event fired an alert. `new_match` is the default
+/// trigger; `price_drop` requires a previous-price snapshot; `score_increased`
+/// fires when the composite score crosses an upward threshold.
+enum NotificationEventType {
+  new_match
+  price_drop
+  score_increased
+  special_object_added
+}
+
+enum NotificationStatus {
+  pending
+  dispatched
+  acknowledged
+  failed
+}
+
+/// User's interaction with a listing. `saved` and `ignored` are mutually
+/// exclusive per (user, listing) — toggle by updating `kind`. `hidden` is
+/// reserved for soft-removal from the dashboard without erasing the row.
+enum InteractionKind {
+  saved
+  ignored
+  hidden
+}
+
+enum AlertFrequency {
+  instant
+  daily
+  weekly
+}
+
+enum AuditAction {
+  create
+  update
+  delete
+  view
+  login
+  logout
+  source_check
+  listing_accepted
+  listing_rejected
+  listing_archived
+  alert_dispatched
+  crawl_started
+  crawl_finished
+  discovery_run
+}
+
+/// What kind of site a Source is — set by the Discovery Engine and editable
+/// by an admin during review.
+enum SourceClassification {
+  real_estate_agency
+  portal
+  irrelevant
+  unknown
+}
+
+/// What kind of distance is stored on ListingLocation. Tells the UI/UX
+/// how to label "{value} km" — as-the-crow-flies, road-distance, or
+/// estimated from a fuzzy centroid.
+enum DistanceType {
+  straight_line
+  driving
+  estimated
+}
+
+/// How much you should trust the location (and therefore the distance).
+/// Driven by the geocoder: full address with rooftop → high, postal
+/// code + city → high/medium, city only → medium, region centroid → low.
+enum DistanceConfidence {
+  high
+  medium
+  low
+}
+
+// =============================================================================
+// USERS / AUTH
+// =============================================================================
+
+model User {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  email         String?   @unique
+  emailVerified DateTime? @map("email_verified")
+  name          String?
+  image         String?
+  role          UserRole  @default(user)
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  accounts            Account[]
+  sessions            Session[]
+  alerts              Alert[]
+  alertNotifications  AlertNotification[]
+  savedListings       SavedListing[]
+  sourceReviews       SourceReview[]
+  auditLogs           AuditLog[]
+
+  @@map("users")
+}
+
+// --- NextAuth.js Prisma adapter support tables -----------------------------
+model Account {
+  id                String  @id @default(uuid(7)) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// =============================================================================
+// SOURCE REGISTRY
+// =============================================================================
+
+model Source {
+  id                 String             @id @default(uuid(7)) @db.Uuid
+
+  name               String
+  country            Country
+  website            String
+  sourceType         SourceType         @map("source_type")
+  collectionMethods  CollectionMethod[] @map("collection_methods")
+
+  status             SourceStatus       @default(pending_review)
+  robotsStatus       RobotsStatus       @default(unknown) @map("robots_status")
+  termsStatus        TermsStatus        @default(unknown) @map("terms_status")
+  legalStatus        LegalStatus        @default(pending_review) @map("legal_status")
+
+  lastCheckedAt      DateTime?          @map("last_checked_at")
+  notes              String?
+
+  /// Per-connector config: feed URL, API endpoint + auth, sitemap URL, mailbox.
+  connectorConfig    Json?              @map("connector_config")
+  rateLimitPerMinute Int?               @map("rate_limit_per_minute")
+  userAgent          String?            @map("user_agent")
+
+  /// Discovery Engine outputs — populated when a Source is found via /api/discovery/run.
+  classification     SourceClassification @default(unknown)
+  /// Structured discovery context: { provider, reason, evidence, region?, language?, ... }
+  discoveryMeta      Json?              @map("discovery_meta")
+
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  rawListings        RawListing[]
+  normalizedListings NormalizedListing[]
+  crawlJobs          CrawlJob[]
+  reviews            SourceReview[]
+
+  @@unique([country, name])
+  @@index([status, country])
+  @@index([legalStatus])
+  @@map("sources")
+}
+
+/// Audit trail of legal/operational reviews of a source. Each material change
+/// to a source's robots/terms/legal status SHOULD create a SourceReview row
+/// so the project can defensibly show "we re-checked this source on X, here
+/// is the evidence URL". Surfaced in the admin Source Registry UI (phase 6).
+model SourceReview {
+  id                 String       @id @default(uuid(7)) @db.Uuid
+  sourceId           String       @map("source_id") @db.Uuid
+  source             Source       @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  reviewedById       String?      @map("reviewed_by_id") @db.Uuid
+  reviewedBy         User?        @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  robotsStatusAfter  RobotsStatus @map("robots_status_after")
+  termsStatusAfter   TermsStatus  @map("terms_status_after")
+  legalStatusAfter   LegalStatus  @map("legal_status_after")
+
+  /// E.g. archive.org snapshot of the ToS as evaluated at review time.
+  evidenceUrl        String?      @map("evidence_url")
+  notes              String?
+
+  createdAt          DateTime     @default(now()) @map("created_at")
+
+  @@index([sourceId, createdAt(sort: Desc)])
+  @@map("source_reviews")
+}
+
+// =============================================================================
+// AGENCIES (makelaars)
+// =============================================================================
+
+model Agency {
+  id                 String   @id @default(uuid(7)) @db.Uuid
+  name               String
+  country            Country
+  website            String?
+  email              String?
+  phone              String?
+  notes              String?
+
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  normalizedListings NormalizedListing[]
+
+  @@unique([country, name])
+  @@index([country])
+  @@map("agencies")
+}
+
+// =============================================================================
+// SEARCH PROFILES
+// =============================================================================
+
+model SearchProfile {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  name      String   @unique
+  country   Country
+  language  Language
+  /// 'general' | 'rural' | 'land' | 'special_object' | 'detached'
+  category  String
+  terms     String[]
+  active    Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  crawlJobs CrawlJob[]
+
+  @@index([country, language, active])
+  @@map("search_profiles")
+}
+
+// =============================================================================
+// CRAWL JOBS (replaces ConnectorRun)
+// =============================================================================
+
+model CrawlJob {
+  id                String         @id @default(uuid(7)) @db.Uuid
+  sourceId          String         @map("source_id") @db.Uuid
+  source            Source         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  /// Which search profile drove this run, if any. NULL = full sweep.
+  searchProfileId   String?        @map("search_profile_id") @db.Uuid
+  searchProfile     SearchProfile? @relation(fields: [searchProfileId], references: [id], onDelete: SetNull)
+
+  status            CrawlJobStatus @default(queued)
+  startedAt         DateTime?      @map("started_at")
+  finishedAt        DateTime?      @map("finished_at")
+
+  itemsFetched      Int            @default(0) @map("items_fetched")
+  itemsAccepted     Int            @default(0) @map("items_accepted")
+  itemsRejected     Int            @default(0) @map("items_rejected")
+  errorMessage      String?        @map("error_message")
+  meta              Json?
+
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  @@index([sourceId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("crawl_jobs")
+}
+
+// =============================================================================
+// RAW LISTINGS (pre-normalisation)
+// =============================================================================
+
+model RawListing {
+  id                   String             @id @default(uuid(7)) @db.Uuid
+  sourceId             String             @map("source_id") @db.Uuid
+  source               Source             @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  /// External id (per-source). Combined with sourceId, deduplicates per source.
+  externalId           String?            @map("external_id")
+  url                  String
+  /// sha256 of normalised payload → change detection across re-fetches.
+  contentHash          String             @map("content_hash")
+  payload              Json
+  language             Language?
+
+  fetchedAt            DateTime           @default(now()) @map("fetched_at")
+  processedAt          DateTime?          @map("processed_at")
+  processingError      String?            @map("processing_error")
+
+  normalizedListingId  String?            @map("normalized_listing_id") @db.Uuid
+  normalizedListing    NormalizedListing? @relation(fields: [normalizedListingId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceId, contentHash])
+  @@unique([sourceId, externalId])
+  @@index([sourceId, fetchedAt(sort: Desc)])
+  @@index([processedAt])
+  @@map("raw_listings")
+}
+
+// =============================================================================
+// NORMALIZED LISTING
+// =============================================================================
+
+model NormalizedListing {
+  id                  String              @id @default(uuid(7)) @db.Uuid
+
+  sourceId            String              @map("source_id") @db.Uuid
+  source              Source              @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  agencyId            String?             @map("agency_id") @db.Uuid
+  agency              Agency?             @relation(fields: [agencyId], references: [id], onDelete: SetNull)
+
+  originalUrl         String              @map("original_url")
+
+  // Multilingual text
+  titleOriginal       String              @map("title_original")
+  titleNl             String?             @map("title_nl")
+  descriptionOriginal String?             @map("description_original") @db.Text
+  descriptionNl       String?             @map("description_nl") @db.Text
+  language            Language
+
+  // Money
+  priceEur            Int?                @map("price_eur")
+  priceOriginal       Int?                @map("price_original")
+  priceCurrency       String?             @default("EUR") @map("price_currency")
+
+  // Property
+  propertyType        PropertyType        @default(unknown) @map("property_type")
+  renovationStatus   RenovationStatus    @default(unknown) @map("renovation_status")
+  isSpecialObject     Boolean             @default(false) @map("is_special_object")
+  specialObjectType   SpecialObjectType?  @map("special_object_type")
+  isDetached          TernaryFlag         @default(unknown) @map("is_detached")
+
+  // Areas / rooms
+  landAreaM2          Int?                @map("land_area_m2")
+  livingAreaM2        Int?                @map("living_area_m2")
+  rooms               Int?
+
+  // Utilities
+  electricityStatus   UtilityStatus       @default(unknown) @map("electricity_status")
+  waterStatus         UtilityStatus       @default(unknown) @map("water_status")
+  energyClass         EnergyClass         @default(unknown) @map("energy_class")
+
+  // Address
+  addressLine         String?             @map("address_line")
+  postalCode          String?             @map("postal_code")
+  city                String?
+  region              String?
+  country             Country
+
+  // Lifecycle
+  availability        ListingAvailability @default(unknown)
+  processingStatus    ProcessingStatus    @default(raw) @map("processing_status")
+  publishedAt         DateTime?           @map("published_at")
+  firstSeenAt         DateTime            @default(now()) @map("first_seen_at")
+  lastSeenAt          DateTime            @default(now()) @map("last_seen_at")
+  archivedAt          DateTime?           @map("archived_at")
+
+  // Dedup
+  /// sha256 of (country, postal_code, address_line, price_eur, land_area_m2).
+  /// Computed by the Deduplication Engine on normalize; indexed so collisions
+  /// across sources are a single B-tree probe.
+  fingerprint          String?            @unique
+  deduplicationGroupId String?            @map("deduplication_group_id") @db.Uuid
+  deduplicationGroup   DeduplicationGroup? @relation("GroupMembers", fields: [deduplicationGroupId], references: [id], onDelete: SetNull)
+
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  // Relations
+  rawListings         RawListing[]
+  location            ListingLocation?
+  score               ListingScore?
+  embedding           ListingEmbedding?
+  media               ListingMedia[]
+  features            ListingFeature[]
+  savedBy             SavedListing[]
+  reviewItems         ReviewQueueItem[]
+  alertNotifications  AlertNotification[]
+  representedGroups   DeduplicationGroup[] @relation("RepresentativeListing")
+
+  @@index([country])
+  @@index([priceEur])
+  @@index([landAreaM2])
+  @@index([propertyType])
+  @@index([isSpecialObject])
+  @@index([availability, country])
+  @@index([processingStatus])
+  @@index([country, availability, priceEur, landAreaM2])
+  @@index([firstSeenAt(sort: Desc)])
+  @@map("normalized_listings")
+}
+
+// =============================================================================
+// LISTING LOCATION (1:1 with NormalizedListing)
+// =============================================================================
+// Split out so that:
+//   - Geocoding can be a separate worker that writes to this table only.
+//   - Multiple locations per listing are easy to add later (drop @unique).
+//   - PostGIS-specific columns are localised and don't bloat the listing row.
+
+model ListingLocation {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  normalizedListingId  String   @unique @map("normalized_listing_id") @db.Uuid
+  normalizedListing    NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  lat                  Float?
+  lng                  Float?
+
+  /// PostGIS geography(Point, 4326). Auto-derived from lat/lng by a trigger
+  /// (see prisma/sql/postgis_setup.sql). App treats this column as read-only.
+  location             Unsupported("geography(Point, 4326)")?
+
+  /// Auto-derived distance from Venlo in kilometers. Read-only.
+  /// Used directly by dashboard / radius filters → no runtime PostGIS calls.
+  distanceFromVenloKm  Float?   @map("distance_from_venlo_km")
+
+  /// Optional driving distance, populated by a driving-distance provider
+  /// (OSRM, Mapbox, …). Null when no road-routing is available — the
+  /// dashboard then falls back to `distanceFromVenloKm`.
+  distanceDrivingKm    Float?   @map("distance_driving_km")
+
+  /// Semantic label for the dashboard's distance display.
+  distanceType         DistanceType       @default(straight_line) @map("distance_type")
+  /// How much to trust this location: high (rooftop/postal), medium (city),
+  /// low (region centroid). Drives the UI badge + matching logic.
+  distanceConfidence   DistanceConfidence @default(low)           @map("distance_confidence")
+
+  /// e.g. "rooftop" | "address" | "postal_code" | "city" | "manual"
+  accuracy             String?
+  /// e.g. "nominatim" | "mapbox" | "google" | "manual" | "source"
+  geocoderSource       String?  @map("geocoder_source")
+  geocodedAt           DateTime? @map("geocoded_at")
+
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([distanceFromVenloKm])
+  @@map("listing_locations")
+}
+
+// =============================================================================
+// GEOCODE CACHE — limits external geocoder API hits
+// =============================================================================
+// Keyed by sha256 of a normalised query string ("country|region|city|postal_code|address_line",
+// each part lowercased + trimmed). The geocoder consults this table BEFORE
+// hitting an external provider; on a miss it writes the provider response
+// back here. Hit count tracked so we can see effectively-popular queries.
+
+model GeocodeCache {
+  id          String              @id @default(uuid(7)) @db.Uuid
+  /// sha256 hex of normalised query; deterministic, indexed unique.
+  queryHash   String              @unique @map("query_hash")
+  /// Original (denormalised) query — kept for debugging + admin browsing.
+  query       String
+
+  lat         Float?
+  lng         Float?
+  accuracy    String?
+  /// Name of the provider that produced this entry (manual / nominatim / estimated_region / ...).
+  provider    String
+  confidence  DistanceConfidence
+
+  /// Verbatim provider response — useful when refining heuristics later.
+  rawResponse Json?               @map("raw_response")
+
+  hits        Int                 @default(1)
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  @@index([provider])
+  @@index([updatedAt(sort: Desc)])
+  @@map("geocode_cache")
+}
+
+// =============================================================================
+// LISTING SCORE (1:1)
+// =============================================================================
+
+model ListingScore {
+  normalizedListingId      String   @id @map("normalized_listing_id") @db.Uuid
+  normalizedListing        NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  // All scores normalised 0..100.
+  matchScore               Float    @default(0) @map("match_score")
+  renovationScore          Float    @default(0) @map("renovation_score")
+  specialObjectScore       Float    @default(0) @map("special_object_score")
+  dataConfidence           Float    @default(0) @map("data_confidence")
+  investmentPotentialScore Float    @default(0) @map("investment_potential_score")
+
+  /// Display & ordering score. Derived but stored so we can ORDER BY + paginate.
+  compositeScore           Float    @default(0) @map("composite_score")
+
+  /// JSON list of components: which sub-rules fired and with what weight.
+  breakdown                Json?
+
+  scoredAt                 DateTime @default(now()) @map("scored_at")
+  scorerVersion            String   @default("v1") @map("scorer_version")
+
+  @@index([matchScore(sort: Desc)])
+  @@index([compositeScore(sort: Desc)])
+  @@index([specialObjectScore(sort: Desc)])
+  @@map("listing_scores")
+}
+
+// =============================================================================
+// LISTING EMBEDDING (1:1, vector placeholder)
+// =============================================================================
+// Room for future pgvector / Meilisearch embedding similarity. The metadata
+// columns ship now; the actual `embedding vector(...)` column is added by a
+// later migration once pgvector is enabled and a model is chosen.
+// See prisma/sql/postgis_setup.sql for the placeholder note.
+
+model ListingEmbedding {
+  normalizedListingId String   @id @map("normalized_listing_id") @db.Uuid
+  normalizedListing   NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  /// Identifier of the embedding model, e.g. "openai-text-embedding-3-small".
+  modelName           String   @map("model_name")
+  /// Vector dimensionality (e.g. 1536 for OpenAI small).
+  dimensions          Int
+  /// Free-form: chunking strategy, tokenisation notes.
+  meta                Json?
+
+  generatedAt         DateTime @default(now()) @map("generated_at")
+
+  @@map("listing_embeddings")
+}
+
+// =============================================================================
+// LISTING MEDIA (n)
+// =============================================================================
+
+model ListingMedia {
+  id                  String       @id @default(uuid(7)) @db.Uuid
+  normalizedListingId String       @map("normalized_listing_id") @db.Uuid
+  normalizedListing   NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  mediaType           MediaType    @default(image) @map("media_type")
+  url                 String
+  caption             String?
+  width               Int?
+  height              Int?
+  sortOrder           Int          @default(0) @map("sort_order")
+  /// sha256 of the asset → dedup the same photo appearing on multiple sources.
+  contentHash         String?      @map("content_hash")
+
+  createdAt           DateTime     @default(now()) @map("created_at")
+
+  @@index([normalizedListingId, sortOrder])
+  @@index([contentHash])
+  @@map("listing_media")
+}
+
+// =============================================================================
+// LISTING FEATURE (n) — open-schema flags & quantities
+// =============================================================================
+// Replaces the "20 nullable boolean columns" pattern. Stores extracted
+// signals like has_well, has_fireplace, barn_count, pond_area_m2, etc.,
+// each with its provenance (source data vs. LLM-extracted vs. manual) so
+// the scoring engine can weight them by confidence.
+
+model ListingFeature {
+  id                  String        @id @default(uuid(7)) @db.Uuid
+  normalizedListingId String        @map("normalized_listing_id") @db.Uuid
+  normalizedListing   NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  /// Stable snake_case key. Convention: <category>_<noun>[_unit].
+  key                 String
+  valueString         String?       @map("value_string")
+  valueNumber         Float?        @map("value_number")
+  valueBool           Boolean?      @map("value_bool")
+
+  /// 0..1
+  confidence          Float         @default(1.0)
+  source              FeatureSource @default(source_data)
+
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  @@unique([normalizedListingId, key])
+  @@index([key])
+  @@map("listing_features")
+}
+
+// =============================================================================
+// DEDUPLICATION GROUP
+// =============================================================================
+// When two normalized listings are judged to be the same physical property
+// (e.g. listed by two agencies), the Deduplication Engine assigns them to
+// the same DeduplicationGroup and picks one as the representative for
+// dashboard display.
+
+model DeduplicationGroup {
+  id                      String              @id @default(uuid(7)) @db.Uuid
+
+  /// Stable hash of identity-defining fields, used as a quick lookup before
+  /// running expensive similarity comparisons.
+  fingerprint             String              @unique
+
+  representativeListingId String?             @map("representative_listing_id") @db.Uuid
+  representativeListing   NormalizedListing?  @relation("RepresentativeListing", fields: [representativeListingId], references: [id], onDelete: SetNull)
+
+  /// 0..1 — how sure the engine is that members are the same property.
+  confidence              Float               @default(1.0)
+  listingCount            Int                 @default(0) @map("listing_count")
+
+  createdAt               DateTime            @default(now()) @map("created_at")
+  updatedAt               DateTime            @updatedAt @map("updated_at")
+
+  members                 NormalizedListing[] @relation("GroupMembers")
+
+  @@index([listingCount(sort: Desc)])
+  @@map("deduplication_groups")
+}
+
+// =============================================================================
+// USER FEATURES: saved listings, alerts
+// =============================================================================
+
+model SavedListing {
+  id                  String          @id @default(uuid(7)) @db.Uuid
+  userId              String          @map("user_id") @db.Uuid
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  normalizedListingId String          @map("normalized_listing_id") @db.Uuid
+  normalizedListing   NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  kind                InteractionKind @default(saved)
+  notes               String?
+
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  @@unique([userId, normalizedListingId])
+  @@index([userId, kind])
+  @@map("saved_listings")
+}
+
+model Alert {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  userId      String         @map("user_id") @db.Uuid
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  enabled     Boolean        @default(true)
+  channel     AlertChannel   @default(email)
+  frequency   AlertFrequency @default(daily)
+
+  /// Saved filter blob: countries, max price, min land, special-only,
+  /// distance, keywords, etc. Validated by Zod at the API layer.
+  criteria    Json
+
+  lastRunAt   DateTime?      @map("last_run_at")
+  /// IDs of normalized listings dispatched in the last run, capped to ~100.
+  /// Kept as a fast denormalised set; AlertNotification is the source of truth.
+  lastNotifiedIds Json?      @map("last_notified_ids")
+
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  notifications AlertNotification[]
+
+  @@index([userId, enabled])
+  @@map("alerts")
+}
+
+/// One row per (alert × listing × event-type). The unique constraint
+/// prevents the same alert firing twice for the same listing+event.
+/// Dispatcher reads pending rows, marks dispatched / failed.
+model AlertNotification {
+  id                  String                @id @default(uuid(7)) @db.Uuid
+
+  alertId             String                @map("alert_id") @db.Uuid
+  alert               Alert                 @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  normalizedListingId String                @map("normalized_listing_id") @db.Uuid
+  listing             NormalizedListing     @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  /// Denormalised user FK so the user's notifications page is one query.
+  userId              String                @map("user_id") @db.Uuid
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  eventType           NotificationEventType @map("event_type")
+  channel             AlertChannel
+  status              NotificationStatus    @default(pending)
+
+  /// Snapshot of what fired the alert (matched criteria, price diff, score, ...)
+  /// — surfaced in the notifications UI for explainability.
+  payload             Json
+
+  createdAt           DateTime              @default(now()) @map("created_at")
+  dispatchedAt        DateTime?             @map("dispatched_at")
+  acknowledgedAt      DateTime?             @map("acknowledged_at")
+  failureReason       String?               @map("failure_reason")
+
+  @@unique([alertId, normalizedListingId, eventType])
+  @@index([userId, status, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("alert_notifications")
+}
+
+// =============================================================================
+// REVIEW QUEUE (listings flagged for human attention)
+// =============================================================================
+
+model ReviewQueueItem {
+  id                  String       @id @default(uuid(7)) @db.Uuid
+  normalizedListingId String       @map("normalized_listing_id") @db.Uuid
+  listing             NormalizedListing @relation(fields: [normalizedListingId], references: [id], onDelete: Cascade)
+
+  reason              ReviewReason
+  status              ReviewStatus @default(pending)
+  note                String?
+
+  createdAt           DateTime     @default(now()) @map("created_at")
+  resolvedAt          DateTime?    @map("resolved_at")
+  resolvedById        String?      @map("resolved_by_id") @db.Uuid
+
+  @@index([status, createdAt])
+  @@index([normalizedListingId])
+  @@map("review_queue")
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+
+model AuditLog {
+  id         String      @id @default(uuid(7)) @db.Uuid
+  userId     String?     @map("user_id") @db.Uuid
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action     AuditAction
+  entityType String      @map("entity_type")
+  entityId   String?     @map("entity_id")
+
+  meta       Json?
+  ip         String?
+  userAgent  String?     @map("user_agent")
+
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

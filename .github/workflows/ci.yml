@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: typecheck + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma generate
+      - run: pnpm typecheck
+      - run: pnpm lint
+
+  unit:
+    name: unit tests (no DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma generate
+      - run: pnpm test
+
+  integration:
+    name: integration tests (Postgres + PostGIS)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: radar
+          POSTGRES_PASSWORD: radar
+          POSTGRES_DB: renovation_radar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U radar -d renovation_radar_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: "postgresql://radar:radar@localhost:5432/renovation_radar_test?schema=public"
+      TEST_DATABASE_URL: "postgresql://radar:radar@localhost:5432/renovation_radar_test?schema=public"
+      NEXTAUTH_SECRET: "test-secret-test-secret-test-secret-12"
+      REDIS_URL: "redis://localhost:6379"
+      MEILISEARCH_HOST: "http://localhost:7700"
+      MEILISEARCH_MASTER_KEY: "test"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma generate
+      - run: pnpm prisma migrate deploy
+      - run: pnpm db:postgis
+      - run: pnpm test:integration
+
+  build:
+    name: Next.js build
+    runs-on: ubuntu-latest
+    needs: [static]
+    env:
+      DATABASE_URL: "postgresql://stub:stub@localhost:5432/stub?schema=public"
+      NEXTAUTH_SECRET: "test-secret-test-secret-test-secret-12"
+      REDIS_URL: "redis://localhost:6379"
+      MEILISEARCH_HOST: "http://localhost:7700"
+      MEILISEARCH_MASTER_KEY: "test"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma generate
+      - run: pnpm build
