@@ -156,7 +156,11 @@ if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   useradd --system --home-dir "${APP_DIR}" --shell /usr/sbin/nologin "${APP_USER}"
   ok "User '${APP_USER}' aangemaakt."
 fi
-chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+# Belangrijk: als ${APP_DIR} een symlink is (bv. /var/www/renovationradar →
+# /mnt/HC_Volume_.../renovationradar) dan dereferencen we hem hier expliciet,
+# anders raakt 'chown -R' alleen de symlink-inode zelf en niet de target.
+APP_DIR_REAL="$(readlink -f "${APP_DIR}" 2>/dev/null || echo "${APP_DIR}")"
+chown -R "${APP_USER}:${APP_USER}" "${APP_DIR_REAL}"
 
 # ---------- 8. DB user + database --------------------------------------------
 DB_PASSWORD_FILE="${APP_DIR}/.deploy-db-password"
