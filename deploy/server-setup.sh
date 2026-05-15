@@ -74,11 +74,15 @@ ensure_node
 if ! command -v pnpm >/dev/null; then
   log "pnpm activeren via corepack…"
   corepack enable
-  corepack prepare pnpm@9 --activate
-  ok "pnpm $(pnpm --version) klaar."
-else
-  ok "pnpm $(pnpm --version) gevonden."
 fi
+# Forceer de pin uit package.json#packageManager — pnpm v10+ heeft
+# onlyBuiltDependencies semantisch gewijzigd; we pinnen op 9.15.x zodat
+# onze pnpm-workspace.yaml allowlist consistent werkt. `corepack prepare`
+# zelf is idempotent: re-runs zijn no-ops als de versie al klopt.
+PNPM_PIN="$(grep -oP '"packageManager"\s*:\s*"pnpm@\K[0-9.]+' "${APP_DIR}/package.json" 2>/dev/null || echo "9.15.4")"
+log "pnpm pinnen op v${PNPM_PIN} via corepack (override eventuele v10/v11)…"
+corepack prepare "pnpm@${PNPM_PIN}" --activate
+ok "pnpm $(pnpm --version 2>&1 | tail -1) actief."
 
 # ---------- 3. Postgres + PostGIS -------------------------------------------
 PG_BIN=""
