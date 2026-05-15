@@ -49,8 +49,10 @@ sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm rebuild @prisma/client 
 sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma generate"
 
 if [[ "${SKIP_MIGRATE}" != "1" ]]; then
-  log "Prisma migrate deploy…"
-  sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma migrate deploy"
+  log "Prisma db push (schema → DB)…"
+  # 'db push' i.p.v. 'migrate deploy' totdat we migration-files in de repo
+  # hebben. Idempotent: doet niks als schema al klopt.
+  sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma db push --skip-generate"
   log "PostGIS triggers + indexes (idempotent)…"
   sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm db:postgis"
 fi

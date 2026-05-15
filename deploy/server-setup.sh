@@ -235,8 +235,12 @@ log "pnpm rebuild voor packages met native binaries (Prisma engines, esbuild)…
 sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm rebuild @prisma/client @prisma/engines prisma esbuild" \
   || warn "pnpm rebuild faalde — Prisma generate hieronder doet vaak zijn eigen engine download."
 
-log "Prisma generate + migrate deploy…"
-sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma generate && pnpm prisma migrate deploy"
+log "Prisma generate + db push (schema → DB)…"
+# We gebruiken 'db push' i.p.v. 'migrate deploy' omdat we (nog) geen
+# migration-folder in de repo hebben. db push synct schema → DB direct.
+# Voor latere fases met echte migrations: switch terug naar 'migrate deploy'
+# nadat 'prisma migrate dev --name init' lokaal een migration heeft gemaakt.
+sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm prisma generate && pnpm prisma db push --skip-generate"
 log "PostGIS triggers + indexes toepassen…"
 sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm db:postgis"
 
