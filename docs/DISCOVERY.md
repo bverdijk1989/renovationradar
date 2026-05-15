@@ -107,6 +107,67 @@ Recommended composition:
 
 ---
 
+## CSV bulk-import
+
+`POST /api/discovery/import-csv` (admin) — upload een CSV met URLs en de
+engine doet de robots.txt-check + classify + persist voor élke regel,
+gegroepeerd per (country, language, region) zodat verschillende rijen
+verschillende taal-defaults krijgen.
+
+### CSV-formaat
+
+Header rij optioneel (single-column URL list werkt zonder). Comma OF
+puntkomma als delimiter (European Excel = `;`). UTF-8 met of zonder BOM.
+
+| Kolom | Verplicht | Synoniemen | Opmerking |
+| --- | :-: | --- | --- |
+| `url` | ✓ | `website`, `link` | http(s) only |
+| `country` | | `land`, `pays` | `FR` / `BE` / `DE` / `NL` |
+| `language` | | `taal`, `langue` | `fr` / `nl` / `de` / `en` |
+| `region` | | `regio` | vrije tekst |
+| `note` | | `notes`, `opmerking` | komt in `discoveryMeta` |
+
+Voorbeeld in [docs/examples/sources.example.csv](./examples/sources.example.csv):
+
+```csv
+url,country,language,region,note
+https://agence-rural.fr/,FR,fr,Lorraine,"Voorbeeld"
+https://makelaar-namur.be/,BE,fr,Namur,
+https://immobilien-eifel.de/,DE,de,Eifel,"Sanierungsbedürftige Häuser"
+```
+
+### Workflow
+
+1. Admin uploadt CSV via de form op `/review` (sectie "CSV-import").
+2. **Voorbeeld** (dryRun=true) — toont parsed rijen + groepering, géén
+   HTTP-calls, géén DB-schrijven. Validatie-fouten per regel in beeld.
+3. **Importeren** (dryRun=false) — engine draait per groep
+   (`discoverAgencies({ country, language, region, urls })`), persists
+   sources als `pending_review`, schrijft AuditLog.
+
+### Limieten
+
+- Max **50 URLs per upload** — anders krijgt de HTTP-request een
+  Nginx-timeout (60s). Voor grotere imports → splits de CSV, of wacht op
+  fase 5+ BullMQ workers.
+- Max **1 MB** bestandsgrootte.
+
+### Programmatic / CLI
+
+```bash
+curl -X POST https://renovationradar.aegiscore.nl/api/discovery/import-csv \
+  -H "Cookie: dev-user-id=<admin-uuid>" \
+  -F "file=@my-sources.csv" \
+  -F "defaultCountry=FR" \
+  -F "defaultLanguage=fr" \
+  -F "dryRun=true"
+```
+
+`dryRun=true` retourneert de parse-summary + groepen zonder DB-mutaties.
+Verwijder de flag om écht te draaien.
+
+---
+
 ## Engine pipeline
 
 ```

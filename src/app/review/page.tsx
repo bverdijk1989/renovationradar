@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ReviewActions } from "./review-actions";
 import { DiscoveryForm } from "./discovery-form";
+import { CsvImportForm } from "./csv-import-form";
 import {
   COUNTRY_LABELS,
   LEGAL_STATUS_LABELS,
@@ -111,6 +112,8 @@ export default async function ReviewQueuePage() {
       </div>
 
       <DiscoveryForm />
+
+      <CsvImportForm />
 
       {sources.length === 0 ? (
         <EmptyState
