@@ -149,8 +149,26 @@ export async function getSpecialObjects(take = 12) {
 
 export async function getMapPoints(take = 500) {
   return prisma.normalizedListing.findMany({
-    where: { ...MATCH_WHERE, location: { is: { lat: { not: null } } } },
-    include: {
+    where: {
+      priceEur: { lte: DEFAULT_CRITERIA.maxPriceEur },
+      landAreaM2: { gte: DEFAULT_CRITERIA.minLandM2 },
+      isDetached: "yes",
+      availability: { in: ["for_sale", "under_offer", "unknown"] },
+      location: {
+        is: {
+          lat: { not: null },
+          lng: { not: null },
+          distanceFromVenloKm: { lte: DEFAULT_CRITERIA.maxDistanceKm },
+        },
+      },
+    },
+    select: {
+      id: true,
+      titleNl: true,
+      titleOriginal: true,
+      priceEur: true,
+      propertyType: true,
+      specialObjectType: true,
       location: { select: { lat: true, lng: true, distanceFromVenloKm: true } },
       score: { select: { compositeScore: true } },
     },
