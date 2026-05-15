@@ -46,7 +46,7 @@ export async function getActor(req: NextRequest): Promise<Actor> {
 
 /**
  * Server-Component variant: reads only from cookies (no NextRequest available
- * in RSC). Use this for `app/**/page.tsx` and `layout.tsx`.
+ * in RSC). Use this for app route page.tsx + layout.tsx files.
  */
 export async function getCurrentUser(): Promise<User | null> {
   if (!isAllowed()) return null;
