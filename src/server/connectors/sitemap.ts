@@ -62,10 +62,13 @@ export class SitemapConnector implements SourceConnector {
       sitemapUrl?: string;
       urlPattern?: string;
       followIndex?: boolean;
+      maxEntries?: number;
     };
     if (!cfg.sitemapUrl) return [];
 
-    return await this.crawl(
+    const maxEntries = Math.max(1, Math.min(50_000, cfg.maxEntries ?? 1_000));
+    const out: RawListingDraft[] = [];
+    await this.crawl(
       cfg.sitemapUrl,
       cfg,
       source,
@@ -73,7 +76,10 @@ export class SitemapConnector implements SourceConnector {
       ctx,
       new Set(),
       0,
+      out,
+      maxEntries,
     );
+    return out;
   }
 
   /** Recursive: handles `<sitemapindex>` ⊕ `<urlset>` */
@@ -85,9 +91,12 @@ export class SitemapConnector implements SourceConnector {
     ctx: FetchContext,
     seen: Set<string>,
     depth: number,
-  ): Promise<RawListingDraft[]> {
-    if (seen.has(url)) return [];
-    if (depth > 3) return []; // hard cap — runaway sitemap chains are a smell
+    out: RawListingDraft[],
+    maxEntries: number,
+  ): Promise<void> {
+    if (seen.has(url)) return;
+    if (depth > 3) return; // hard cap — runaway sitemap chains are a smell
+    if (out.length >= maxEntries) return;
     seen.add(url);
 
     await ctx.rateLimiter.wait(source.id, source.rateLimitPerMinute);
@@ -95,25 +104,31 @@ export class SitemapConnector implements SourceConnector {
       signal: ctx.signal,
       headers: source.userAgent ? { "User-Agent": source.userAgent } : undefined,
     });
-    assertXmlLooksValid(res.body, "urlset");
+    // Een geldige sitemap-response is óf een <urlset> óf een <sitemapindex>.
+    // De strikte assertion op "urlset" blokkeerde index-responses helemaal.
+    if (!/<urlset\b/i.test(res.body) && !/<sitemapindex\b/i.test(res.body)) {
+      assertXmlLooksValid(res.body, "urlset"); // gooit met duidelijke message
+    }
 
-    // Sitemap index?
+    // Sitemap index? Default = volg de child-sitemaps (binnen depth-cap).
+    // Een sitemap-index zonder follow is per definitie nutteloos.
     if (/<sitemapindex\b/i.test(res.body)) {
-      if (!cfg.followIndex) return [];
+      const followIndex = cfg.followIndex ?? true;
+      if (!followIndex) return;
       const childUrls = splitBlocks(res.body, "sitemap")
         .map((b) => readTag(b, "loc"))
         .filter((s): s is string => !!s);
-      const out: RawListingDraft[] = [];
       for (const child of childUrls) {
-        out.push(...(await this.crawl(child, cfg, source, profile, ctx, seen, depth + 1)));
+        if (out.length >= maxEntries) break;
+        await this.crawl(child, cfg, source, profile, ctx, seen, depth + 1, out, maxEntries);
       }
-      return out;
+      return;
     }
 
     // Plain urlset.
     const entries = splitBlocks(res.body, "url");
-    const drafts: RawListingDraft[] = [];
     for (const block of entries) {
+      if (out.length >= maxEntries) break;
       const loc = readTag(block, "loc");
       if (!loc) continue;
       if (cfg.urlPattern && !loc.includes(cfg.urlPattern)) continue;
@@ -137,8 +152,7 @@ export class SitemapConnector implements SourceConnector {
           continue;
         }
       }
-      drafts.push(draft);
+      out.push(draft);
     }
-    return drafts;
   }
 }

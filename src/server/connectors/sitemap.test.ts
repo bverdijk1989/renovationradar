@@ -87,39 +87,59 @@ describe("SitemapConnector", () => {
     expect(drafts.every((d) => d.url.includes("/property/"))).toBe(true);
   });
 
-  it("ignores sitemap indexes by default (no followIndex)", async () => {
+  it("follows sitemap indexes by default", async () => {
     const drafts = await c.fetchListings(source(), null, {
       transport: new MockTransport({
         "https://example.de/sitemap.xml": { body: INDEX_FIXTURE },
+        "https://example.de/sitemap-1.xml": { body: CHILD_1 },
+        "https://example.de/sitemap-2.xml": { body: CHILD_2 },
       }),
       rateLimiter: new NoopRateLimiter(),
       crawlJobId: "j1",
     });
-    expect(drafts).toEqual([]);
+    expect(drafts.map((d) => d.url).sort()).toEqual([
+      "https://example.de/property/a",
+      "https://example.de/property/b",
+    ]);
   });
 
-  it("follows sitemap indexes when followIndex=true", async () => {
+  it("respects followIndex=false to skip nested sitemap-index fetches", async () => {
     const drafts = await c.fetchListings(
       source({
         connectorConfig: {
           sitemapUrl: "https://example.de/sitemap.xml",
-          followIndex: true,
+          followIndex: false,
         } as never,
       }),
       null,
       {
         transport: new MockTransport({
           "https://example.de/sitemap.xml": { body: INDEX_FIXTURE },
-          "https://example.de/sitemap-1.xml": { body: CHILD_1 },
-          "https://example.de/sitemap-2.xml": { body: CHILD_2 },
         }),
         rateLimiter: new NoopRateLimiter(),
         crawlJobId: "j1",
       },
     );
-    expect(drafts.map((d) => d.url).sort()).toEqual([
-      "https://example.de/property/a",
-      "https://example.de/property/b",
-    ]);
+    expect(drafts).toEqual([]);
+  });
+
+  it("caps via maxEntries to avoid runaway sitemap-index crawls", async () => {
+    const drafts = await c.fetchListings(
+      source({
+        connectorConfig: {
+          sitemapUrl: "https://example.de/sitemap.xml",
+          maxEntries: 1,
+        } as never,
+      }),
+      null,
+      {
+        transport: new MockTransport({
+          "https://example.de/sitemap.xml": { body: URLSET_FIXTURE },
+        }),
+        rateLimiter: new NoopRateLimiter(),
+        crawlJobId: "j1",
+      },
+    );
+    expect(drafts).toHaveLength(1);
   });
 });
