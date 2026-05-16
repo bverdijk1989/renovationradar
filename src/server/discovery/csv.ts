@@ -43,6 +43,14 @@ const HEADER_ALIASES: Record<string, keyof CsvRow | "skip"> = {
   url: "url",
   website: "url",
   link: "url",
+  domain: "url",
+  host: "url",
+  hostname: "url",
+  // Display-naam kolommen: expliciet skip zodat ze niet per ongeluk over de
+  // url-kolom heen schrijven als ze later in dezelfde rij staan.
+  name: "skip",
+  website_name: "skip",
+  brand: "skip",
   country: "country",
   land: "country",
   pays: "country",
@@ -51,6 +59,10 @@ const HEADER_ALIASES: Record<string, keyof CsvRow | "skip"> = {
   langue: "language",
   region: "region",
   regio: "region",
+  region_or_focus: "region",
+  source_type: "skip",
+  priority: "skip",
+  priority_for_review: "skip",
   notes: "note",
   note: "note",
   opmerking: "note",
@@ -131,10 +143,12 @@ export function parseSourcesCsv(text: string): CsvParseResult {
       errors.push({ line: lineNo, message: "regel mist URL" });
       continue;
     }
-    if (!isHttpUrl(row.url)) {
-      errors.push({ line: lineNo, message: `geen geldige http(s) URL: "${row.url}"` });
+    const normalized = normalizeUrl(row.url);
+    if (!normalized) {
+      errors.push({ line: lineNo, message: `geen geldige URL: "${row.url}"` });
       continue;
     }
+    row.url = normalized;
     rows.push(row as CsvRow);
   }
 
@@ -197,6 +211,33 @@ function isHttpUrl(s: string): boolean {
     return u.protocol === "http:" || u.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+/**
+ * Normalise a CSV-supplied URL:
+ *   - "https://immoweb.be" → as-is
+ *   - "immoweb.be" → "https://immoweb.be"
+ *   - "www.immoweb.be/agenten" → "https://www.immoweb.be/agenten"
+ *
+ * Auto-prepending https:// is a convenience for human-edited CSVs (Excel,
+ * Google Sheets), where the scheme is almost never typed. Returns null when
+ * the value is not a parseable hostname even after prepending.
+ */
+export function normalizeUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const withScheme = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  if (!isHttpUrl(withScheme)) return null;
+  // Reject schemes-only or no-host values like "https://" or "https:///path".
+  try {
+    const u = new URL(withScheme);
+    if (!u.hostname || !u.hostname.includes(".")) return null;
+    return withScheme;
+  } catch {
+    return null;
   }
 }
 
