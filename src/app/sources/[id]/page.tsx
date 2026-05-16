@@ -39,27 +39,23 @@ export default async function SourceDetailPage({
             Terug naar bronnen
           </Link>
         </Button>
-        <PageHeader
-          title={source.name}
-          description={
-            <span className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{label(COUNTRY_LABELS, source.country)}</Badge>
-              <Badge>{label(SOURCE_STATUS_LABELS, source.status)}</Badge>
-              <Badge variant={source.legalStatus === "green" ? "default" : "outline"}>
-                Legal: {label(LEGAL_STATUS_LABELS, source.legalStatus)}
-              </Badge>
-              <a
-                href={source.website}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
-              >
-                {source.website}
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            </span>
-          }
-        />
+        <PageHeader title={source.name} className="mb-2" />
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{label(COUNTRY_LABELS, source.country)}</Badge>
+          <Badge>{label(SOURCE_STATUS_LABELS, source.status)}</Badge>
+          <Badge variant={source.legalStatus === "green" ? "default" : "outline"}>
+            Legal: {label(LEGAL_STATUS_LABELS, source.legalStatus)}
+          </Badge>
+          <a
+            href={source.website}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+          >
+            {source.website}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
       </div>
 
       <SourceConnectorForm
