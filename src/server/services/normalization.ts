@@ -182,9 +182,27 @@ function buildNormalizationInput(
   }
 
   if (kind === "sitemap") {
-    // Sitemap entries hebben alleen een URL — niet voldoende voor de extractor.
-    // We laten 'm liggen tot een HTML-scrape de details ophaalt.
-    return null;
+    // Sitemap entries hebben alleen een URL en optionele lastmod. We bouwen
+    // een NormalizationInput op basis van:
+    //   - URL-slug → city + postal_code (via extractAddressFromUrl)
+    //   - laatste pad-segment → fallback titel
+    // De rule-based extractor levert weinig op (geen description), maar
+    // de geocoder pikt city+postal wel op zodat de listing op de kaart
+    // verschijnt. Detail-pagina's worden later afzonderlijk gefetcht door
+    // een depth-2 HTML pass over deze URLs (toekomstige fase).
+    const fromUrl = extractAddressFromUrl(raw.url, country);
+    const title = buildTitleFromUrl(raw.url) ?? raw.url;
+    return {
+      rawListingId: raw.id,
+      sourceId: raw.sourceId,
+      url: raw.url,
+      languageHint: raw.language,
+      title,
+      description: null,
+      country,
+      city: fromUrl.city,
+      postalCode: fromUrl.postalCode,
+    };
   }
 
   // Onbekend payload-formaat → probeer titel/description heuristisch.
@@ -279,6 +297,30 @@ function extractAddressFromUrl(
     return { postalCode: match[2], city: titleCase(match[1]!) };
   }
   return {};
+}
+
+/**
+ * Bouw een leesbare titel uit de URL-slug als de connector er geen kon
+ * leveren (typisch het geval voor sitemap entries).
+ *
+ *   /nl/te-koop/huis/tournai-7500 → "Te Koop Huis · Tournai 7500"
+ *   /property/grand-domaine-12345 → "Property · Grand Domaine 12345"
+ */
+function buildTitleFromUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname;
+    const segments = path.split("/").filter(Boolean);
+    if (segments.length === 0) return null;
+    const last = segments[segments.length - 1]!;
+    const pretty = last.replace(/[-_]/g, " ").trim();
+    return pretty
+      .split(" ")
+      .map((w) => (w.length > 0 ? w[0]!.toUpperCase() + w.slice(1) : ""))
+      .join(" ")
+      .trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function titleCase(slug: string): string {
