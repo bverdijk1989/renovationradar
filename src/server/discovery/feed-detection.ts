@@ -1,7 +1,8 @@
 import "server-only";
 import type { Source } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { FetchTransport, type HttpTransport } from "@/server/connectors/transport";
+import { FetchTransport } from "@/server/connectors/transport";
+import type { HttpTransport } from "@/server/connectors/types";
 
 /**
  * Feed-detection: zoek voor een gegeven bron naar een gestructureerde
