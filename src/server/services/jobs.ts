@@ -13,6 +13,7 @@ import { runConnectorJob } from "../connectors";
 import type { CrawlRunResult } from "../connectors";
 import { normalizePending } from "./normalization";
 import { geocodePending } from "../geocoding";
+import { applyDetectedFeeds } from "../discovery/feed-detection";
 
 type ListQuery = z.infer<typeof JobListQuerySchema>;
 
@@ -158,6 +159,17 @@ export async function runAllActiveSources(): Promise<RunAllResult> {
   let failed = 0;
 
   for (const s of sources) {
+    // Sitemap-first: probeer auto-detectie bij scrape-bronnen zonder
+    // expliciet geconfigureerde feed. Goedkoop (1 robots.txt + ~4 HEAD
+    // calls) en lost JS-rendered probleem op zodra een site een sitemap
+    // publiceert. Geen-effect bij bronnen die al een sitemap/rss config
+    // hebben staan.
+    try {
+      await applyDetectedFeeds(s.id);
+    } catch {
+      // Best-effort; faalt → fallback op huidige sourceType.
+    }
+
     const job = await prisma.crawlJob.create({
       data: { sourceId: s.id, status: "queued" },
     });
