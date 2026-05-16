@@ -381,14 +381,15 @@ function stripHtml(s: string): string {
     .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
     // CSS-class-definities die als platte tekst in de HTML belanden
-    // (Emotion / styled-components hash classes). Lineair regex zonder
-    // backtracking: selector (optional . # of _ prefix) gevolgd door
-    // { props }. Multi-selectors zoals `.a,.b{...}` worden niet als
-    // geheel gevangen — losse selectors blijven over, maar het volgende
-    // regex-paar haalt de overgebleven { ... } blokken weg.
+    // (Emotion / styled-components hash classes). Drie passes:
+    //   1. Volledig blok: selector { rules } in één regex
+    //   2. Alle losstaande {...} blokken (selectorless of multi-selector)
+    //   3. Achtergebleven losse class-selectors: `.hashedClass,` of
+    //      `_hash6charsplus` zonder context — typisch 12+ chars hex/alnum.
     .replace(/[._#][a-z0-9_-]{4,}\s*\{[^{}]*\}/gi, " ")
-    // Fallback: alle losse {...} blokken die op CSS lijken.
     .replace(/\{[^{}]{0,5000}\}/g, " ")
+    .replace(/[._][a-z0-9_-]{12,}/gi, " ")
+    .replace(/\s*,\s*(?=\s|$)/g, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
