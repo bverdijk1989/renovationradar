@@ -162,11 +162,12 @@ function buildNormalizationInput(
     const p = payload as unknown as HtmlPayload;
     const title = (p.title ?? "").trim();
     if (!title) return null;
-    // Description: extract body text from raw HTML (very lossy maar geeft de
-    // rule-based extractor wat hooi). Cap op 5kB om regex-tijd te beperken.
-    const description = p.html
-      ? stripHtml(p.html.slice(0, 50_000)).slice(0, 5_000) || null
-      : null;
+    // Description: probeer eerst de curated <meta name="description"> uit
+    // de HTML. Dat is altijd door de site zelf gekozen tekst, schoon en
+    // bondig. Body-tekst extraheren uit JS-rendered React DOM levert
+    // CSS-rommel op (Emotion / styled-components inline-style hashes)
+    // — niet meer proberen.
+    const description = p.html ? extractMetaDescription(p.html) : null;
     const fromUrl = extractAddressFromUrl(raw.url, country);
     return {
       rawListingId: raw.id,
@@ -352,6 +353,41 @@ function buildTitleFromUrl(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Pak de inhoud van <meta name="description" content="…"> uit een HTML
+ * document. Sites schrijven daar bondige, voor-mensen-bedoelde tekst,
+ * bv. "Huis te koop in Glabbeek - 3 slaapkamers, 250 m², ruime tuin".
+ * Retourneert null als de meta-tag niet bestaat of leeg is.
+ */
+function extractMetaDescription(html: string): string | null {
+  // Zowel <meta name="description"> als <meta property="og:description">.
+  const patterns = [
+    /<meta[^>]+\bname=["']description["'][^>]*\bcontent=["']([^"']+)["']/i,
+    /<meta[^>]+\bcontent=["']([^"']+)["'][^>]*\bname=["']description["']/i,
+    /<meta[^>]+\bproperty=["']og:description["'][^>]*\bcontent=["']([^"']+)["']/i,
+    /<meta[^>]+\bcontent=["']([^"']+)["'][^>]*\bproperty=["']og:description["']/i,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) {
+      const text = decodeHtmlEntities(m[1].trim());
+      if (text.length >= 10) return text.slice(0, 2_000);
+    }
+  }
+  return null;
+}
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&#39;/g, "'");
 }
 
 function titleCase(slug: string): string {
