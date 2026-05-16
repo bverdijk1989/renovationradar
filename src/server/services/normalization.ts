@@ -380,17 +380,15 @@ function stripHtml(s: string): string {
     .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
     .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
-    // CSS-class-definities die door React/Next/Emotion-CSS-in-JS als
-    // platte tekst in de HTML belanden: `_<hash>{prop:val;...}` of
-    // `.<class>{...}` of `#<id>{...}`. Het underscore-zonder-prefix
-    // patroon (`_9112aa...{...}`) komt vaak voor bij Emotion's hashed
-    // classnames. Komma-separated selectors meerekenen.
-    .replace(/(?:[._#]?[a-z0-9_-]{4,}\s*,?\s*)+\{[^{}]*\}/gi, " ")
-    // Lossere fallback: alles tussen { en } dat er als CSS uitziet
-    // (key:value;-paren). Pakt media-queries en losse {...} blokken.
-    .replace(/\{[^{}]*?:[^{}]*?;[^{}]*\}/g, " ")
-    // Ook overgebleven losse property-paren (`color:#aaa;`, `font-size:1em;`).
-    .replace(/[a-z-]+:\s*[^;{}]+;/gi, " ")
+    // CSS-class-definities die als platte tekst in de HTML belanden
+    // (Emotion / styled-components hash classes). Lineair regex zonder
+    // backtracking: selector (optional . # of _ prefix) gevolgd door
+    // { props }. Multi-selectors zoals `.a,.b{...}` worden niet als
+    // geheel gevangen — losse selectors blijven over, maar het volgende
+    // regex-paar haalt de overgebleven { ... } blokken weg.
+    .replace(/[._#][a-z0-9_-]{4,}\s*\{[^{}]*\}/gi, " ")
+    // Fallback: alle losse {...} blokken die op CSS lijken.
+    .replace(/\{[^{}]{0,5000}\}/g, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
