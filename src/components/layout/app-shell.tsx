@@ -12,6 +12,7 @@ import {
   Bell,
   Inbox,
   Radar,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,7 @@ const NAV: NavItem[] = [
   { href: "/map", label: "Kaartweergave", icon: Map },
   { href: "/agencies", label: "Makelaarbronnen", icon: Building2 },
   { href: "/sources", label: "Bronbeheer", icon: Database },
+  { href: "/criteria", label: "Zoekcriteria", icon: SlidersHorizontal },
   { href: "/review", label: "Review wachtrij", icon: CheckSquare },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/notifications", label: "Meldingen", icon: Inbox },

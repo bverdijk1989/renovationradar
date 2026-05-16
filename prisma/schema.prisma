@@ -1008,3 +1008,39 @@ model AuditLog {
   @@index([action, createdAt(sort: Desc)])
   @@map("audit_logs")
 }
+
+// =============================================================================
+// SEARCH CRITERIA — globale brief-instellingen, één row
+// =============================================================================
+// Bevat de actieve zoekcriteria die het dashboard, /map, /listings en
+// alerts gebruiken om "matches" te bepalen. Singleton-pattern: één row
+// met fixed id "default". Admin past 'm aan via /criteria; consumers
+// halen 'm op via getActiveCriteria() in services/criteria.ts.
+//
+// Eerste row wordt ingezogen vanuit DEFAULT_CRITERIA bij de eerste
+// service-call als 'ie nog niet bestaat (lazy bootstrap).
+
+model SearchCriteria {
+  id                 String   @id @default("default")
+  maxPriceEur        Int      @map("max_price_eur")
+  minLandM2          Int      @map("min_land_m2")
+  /// 1.0 = volledig, 0.0 = niet vereist. Boolean met room for grijs.
+  requireDetached    Boolean  @default(true) @map("require_detached")
+  requireElectricity Boolean  @default(true) @map("require_electricity")
+  preferWater        Boolean  @default(true) @map("prefer_water")
+  /// Toon ook special objects (molen, sluiswachterhuis, station, vuurtoren)
+  /// die buiten de standaard prijs/grond/detached criteria vallen?
+  includeSpecialObjects Boolean @default(true) @map("include_special_objects")
+  /// Max afstand vanaf Venlo in km.
+  maxDistanceKm      Float    @map("max_distance_km")
+  /// Welke landen worden meegenomen. JSON-array van country-codes.
+  countries          Json     @default("[\"FR\",\"BE\",\"DE\"]")
+  /// Optionele override-tekst die admin kan invullen — toelichting bij
+  /// recente aanpassing voor audit/history.
+  notes              String?
+
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  updatedById        String?  @map("updated_by_id") @db.Uuid
+
+  @@map("search_criteria")
+}

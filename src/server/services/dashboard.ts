@@ -2,6 +2,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { DEFAULT_CRITERIA } from "@/lib/listings/criteria";
+import { getActiveCriteria } from "./criteria";
 
 /**
  * Dashboard data fetchers. Called from Server Components — no HTTP overhead.
@@ -10,6 +11,52 @@ import { DEFAULT_CRITERIA } from "@/lib/listings/criteria";
  *   price ≤ €200k, land ≥ 1 ha, detached=yes, distance ≤ 350 km, not sold/withdrawn.
  */
 
+/**
+ * Bouw de "match" WHERE op basis van de huidige (DB-stored) criteria.
+ * Wordt per query opgehaald zodat admin-aanpassingen via /criteria
+ * direct effect hebben.
+ *
+ * `includeSpecialObjects=true` (default) voegt een OR-clausule toe
+ * waarbij special_object_type IS NOT NULL door alle andere eisen mag
+ * heenbreken — molens/sluiswachterhuizen/vuurtorens worden altijd
+ * getoond als ze er zijn, ongeacht prijs/grond/detached-criteria.
+ */
+async function buildMatchWhere(): Promise<Prisma.NormalizedListingWhereInput> {
+  const c = await getActiveCriteria();
+  const baseMatch: Prisma.NormalizedListingWhereInput = {
+    priceEur: { lte: c.maxPriceEur },
+    landAreaM2: { gte: c.minLandM2 },
+    availability: { in: ["for_sale", "under_offer", "unknown"] },
+    location: {
+      is: { distanceFromVenloKm: { lte: c.maxDistanceKm } },
+    },
+    country: { in: c.countries },
+  };
+  if (c.requireDetached) {
+    baseMatch.isDetached = "yes";
+  }
+  if (c.requireElectricity) {
+    baseMatch.electricityStatus = { in: ["present", "likely"] };
+  }
+  if (c.includeSpecialObjects) {
+    return {
+      OR: [
+        baseMatch,
+        {
+          isSpecialObject: true,
+          availability: { in: ["for_sale", "under_offer", "unknown"] },
+          location: {
+            is: { distanceFromVenloKm: { lte: c.maxDistanceKm } },
+          },
+        },
+      ],
+    };
+  }
+  return baseMatch;
+}
+
+// Backwards-compat constant — initiële MATCH_WHERE blijft hier voor
+// modules die nog niet zijn omgezet naar async. Gebruikt DEFAULT_CRITERIA.
 const MATCH_WHERE = {
   priceEur: { lte: DEFAULT_CRITERIA.maxPriceEur },
   landAreaM2: { gte: DEFAULT_CRITERIA.minLandM2 },
@@ -32,6 +79,8 @@ export type DashboardKpis = {
 export async function getDashboardKpis(): Promise<DashboardKpis> {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
+  const matchWhere = await buildMatchWhere();
+  const criteria = await getActiveCriteria();
 
   const [
     newToday,
@@ -42,20 +91,20 @@ export async function getDashboardKpis(): Promise<DashboardKpis> {
     activeSources,
   ] = await Promise.all([
     prisma.normalizedListing.count({
-      where: { ...MATCH_WHERE, firstSeenAt: { gte: startOfToday } },
+      where: { AND: [matchWhere, { firstSeenAt: { gte: startOfToday } }] },
     }),
-    prisma.normalizedListing.count({ where: MATCH_WHERE }),
+    prisma.normalizedListing.count({ where: matchWhere }),
     prisma.normalizedListing.count({
-      where: { ...MATCH_WHERE, isSpecialObject: true },
+      where: { AND: [matchWhere, { isSpecialObject: true }] },
     }),
     prisma.normalizedListing.aggregate({
-      where: MATCH_WHERE,
+      where: matchWhere,
       _avg: { priceEur: true },
     }),
     prisma.listingLocation.aggregate({
       where: {
-        distanceFromVenloKm: { lte: DEFAULT_CRITERIA.maxDistanceKm },
-        normalizedListing: { is: MATCH_WHERE },
+        distanceFromVenloKm: { lte: criteria.maxDistanceKm },
+        normalizedListing: { is: matchWhere },
       },
       _avg: { distanceFromVenloKm: true },
     }),
@@ -85,8 +134,9 @@ const TOP_INCLUDE = {
 } satisfies Prisma.NormalizedListingInclude;
 
 export async function getTopMatches(take = 10) {
+  const where = await buildMatchWhere();
   return prisma.normalizedListing.findMany({
-    where: MATCH_WHERE,
+    where,
     include: TOP_INCLUDE,
     orderBy: { score: { compositeScore: "desc" } },
     take,
@@ -94,8 +144,9 @@ export async function getTopMatches(take = 10) {
 }
 
 export async function getNewMatches(take = 12) {
+  const where = await buildMatchWhere();
   return prisma.normalizedListing.findMany({
-    where: MATCH_WHERE,
+    where,
     include: TOP_INCLUDE,
     orderBy: { firstSeenAt: "desc" },
     take,
@@ -130,8 +181,9 @@ export async function getRecentPriceDrops(take = 5) {
   // Fallback: pretend the most recently seen listings are recent drops so
   // the dev dashboard has a populated section. Connector pipeline will
   // produce real `price_drop_eur` features in fase 4/5.
+  const matchWhere = await buildMatchWhere();
   const recent = await prisma.normalizedListing.findMany({
-    where: MATCH_WHERE,
+    where: matchWhere,
     include: TOP_INCLUDE,
     orderBy: { lastSeenAt: "desc" },
     take,
@@ -140,8 +192,9 @@ export async function getRecentPriceDrops(take = 5) {
 }
 
 export async function getSpecialObjects(take = 12) {
+  const matchWhere = await buildMatchWhere();
   return prisma.normalizedListing.findMany({
-    where: { ...MATCH_WHERE, isSpecialObject: true },
+    where: { AND: [matchWhere, { isSpecialObject: true }] },
     include: TOP_INCLUDE,
     orderBy: { score: { compositeScore: "desc" } },
     take,
@@ -157,14 +210,16 @@ export async function getSpecialObjects(take = 12) {
  * Listings zonder lat/lng worden uitgesloten (anders geen pin mogelijk).
  */
 export async function getMapPoints(take = 500) {
+  const criteria = await getActiveCriteria();
   return prisma.normalizedListing.findMany({
     where: {
       availability: { in: ["for_sale", "under_offer", "unknown"] },
+      country: { in: criteria.countries },
       location: {
         is: {
           lat: { not: null },
           lng: { not: null },
-          distanceFromVenloKm: { lte: DEFAULT_CRITERIA.maxDistanceKm },
+          distanceFromVenloKm: { lte: criteria.maxDistanceKm },
         },
       },
     },
