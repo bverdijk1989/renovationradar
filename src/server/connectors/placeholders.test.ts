@@ -61,7 +61,7 @@ describe("ApiConnector (placeholder)", () => {
   });
 });
 
-describe("PermittedHtmlConnector (placeholder)", () => {
+describe("PermittedHtmlConnector (generic scraper)", () => {
   const c = new PermittedHtmlConnector();
 
   it("canHandle accepts scrape-type sources OR scrape_with_permission methods", () => {
@@ -81,7 +81,11 @@ describe("PermittedHtmlConnector (placeholder)", () => {
 
   it("validateSource rejects when scrape_with_permission is missing", async () => {
     const r = await c.validateSource(
-      source({ sourceType: "scrape", collectionMethods: ["api"] }),
+      source({
+        sourceType: "scrape",
+        collectionMethods: ["api"],
+        legalStatus: "green",
+      }),
     );
     expect(r.ok).toBe(false);
     expect(r.issues.some((i) => i.includes("scrape_with_permission"))).toBe(
@@ -89,10 +93,51 @@ describe("PermittedHtmlConnector (placeholder)", () => {
     );
   });
 
-  it("fetchListings throws NotImplementedError", async () => {
-    await expect(c.fetchListings(source(), null, ctx)).rejects.toBeInstanceOf(
-      NotImplementedError,
+  it("validateSource rejects when legalStatus is not green", async () => {
+    const r = await c.validateSource(
+      source({
+        sourceType: "scrape",
+        collectionMethods: ["scrape_with_permission"],
+        legalStatus: "pending_review",
+      }),
     );
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => i.includes("green"))).toBe(true);
+  });
+
+  it("extracts listing-page links and fetches them as RawListingDrafts", async () => {
+    const indexHtml = `
+      <html><head><title>Welkom bij makelaar</title></head>
+      <body>
+        <a href="/over-ons">Over ons</a>
+        <a href="/te-koop/huis-1">Te koop · Boerderij in Lorraine</a>
+        <a href="/te-koop/huis-2">Te koop · Longère</a>
+        <a href="https://external.com/x">externe link</a>
+        <a href="mailto:foo@bar">e-mail</a>
+      </body></html>`;
+    const detail1Html = `<html><head><title>Boerderij in Lorraine</title></head><body>...detail 1...</body></html>`;
+    const detail2Html = `<html><head><title>Longère</title></head><body>...detail 2...</body></html>`;
+    const transport = new MockTransport({
+      "https://example.com/": { body: indexHtml },
+      "https://example.com/te-koop/huis-1": { body: detail1Html },
+      "https://example.com/te-koop/huis-2": { body: detail2Html },
+    });
+    const drafts = await c.fetchListings(
+      source({
+        sourceType: "scrape",
+        collectionMethods: ["scrape_with_permission"],
+        legalStatus: "green",
+        website: "https://example.com/",
+      }),
+      null,
+      { transport, rateLimiter: new NoopRateLimiter(), crawlJobId: "j1" },
+    );
+    expect(drafts).toHaveLength(2);
+    expect(drafts.map((d) => d.url).sort()).toEqual([
+      "https://example.com/te-koop/huis-1",
+      "https://example.com/te-koop/huis-2",
+    ]);
+    expect((drafts[0]!.payload as { kind: string }).kind).toBe("detail");
   });
 });
 

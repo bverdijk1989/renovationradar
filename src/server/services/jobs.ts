@@ -11,6 +11,7 @@ import type { JobListQuerySchema } from "../schemas/jobs";
 import type { RunSearchJobInput } from "../schemas/jobs";
 import { runConnectorJob } from "../connectors";
 import type { CrawlRunResult } from "../connectors";
+import { normalizePending } from "./normalization";
 
 type ListQuery = z.infer<typeof JobListQuerySchema>;
 
@@ -121,6 +122,11 @@ export type RunAllResult = {
     itemsRejected: number;
     errorMessage?: string;
   }>;
+  normalize: {
+    totalCandidates: number;
+    succeeded: number;
+    failed: number;
+  };
 };
 
 /**
@@ -175,6 +181,18 @@ export async function runAllActiveSources(): Promise<RunAllResult> {
     }
   }
 
+  // Na de crawl-fase: probeer de net opgeslagen raw_listings meteen door
+  // de normalisatie te halen, zodat de dashboard listings krijgt. Faalt dit
+  // dan zijn de raw rows niet verloren — een latere /api/normalize/run-pending
+  // pakt ze opnieuw op.
+  const normalize = await normalizePending(500).catch(() => ({
+    totalCandidates: 0,
+    succeeded: 0,
+    failed: 0,
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+  }));
+
   return {
     totalSources: sources.length,
     succeeded,
@@ -182,5 +200,10 @@ export async function runAllActiveSources(): Promise<RunAllResult> {
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
     results,
+    normalize: {
+      totalCandidates: normalize.totalCandidates,
+      succeeded: normalize.succeeded,
+      failed: normalize.failed,
+    },
   };
 }

@@ -1,5 +1,6 @@
 "use client";
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ExternalLink, Power, PowerOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -68,16 +69,23 @@ export function SourcesTable({ sources }: { sources: SourceRow[] }) {
               {sources.map((s) => (
                 <tr key={s.id}>
                   <td className="p-3">
-                    <div className="font-medium">{s.name}</div>
-                    <a
-                      href={s.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary hover:underline"
+                    <Link
+                      href={`/sources/${s.id}`}
+                      className="font-medium hover:text-primary hover:underline"
                     >
-                      {s.website.length > 40 ? `${s.website.slice(0, 40)}…` : s.website}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
+                      {s.name}
+                    </Link>
+                    <div>
+                      <a
+                        href={s.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary hover:underline"
+                      >
+                        {s.website.length > 40 ? `${s.website.slice(0, 40)}…` : s.website}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
                   </td>
                   <td className="p-3">{label(COUNTRY_LABELS, s.country)}</td>
                   <td className="p-3 text-muted-foreground">{s.sourceType}</td>
