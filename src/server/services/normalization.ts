@@ -259,19 +259,22 @@ function draftToCreateInput(
 }
 
 /**
- * Probeer city + postcode uit de URL-slug te trekken. Werkt voor de
- * gangbare patronen die makelaarssites in NL/BE/FR/DE gebruiken:
+ * Probeer city + (optioneel) postcode uit de URL-slug te trekken. Drie
+ * gangbare URL-patterns voor property-pages:
  *
- *   BE: /nl/te-koop/huis/tournai-7500   → city=Tournai, postal=7500
- *   NL: /aanbod/1234-ab-amsterdam        → city=Amsterdam, postal=1234 AB
- *   FR: /annonce/75001-paris-villa-xyz   → city=Paris, postal=75001
- *   DE: /haus/50667-koeln-altstadt       → city=Koeln, postal=50667
+ *   1. city+postal samen:
+ *        BE: /nl/te-koop/huis/tournai-7500   → city=Tournai, postal=7500
+ *        FR: /annonce/75001-paris-...        → city=Paris, postal=75001
  *
- * Postcode-lengte hangt af van het land (BE/NL = 4, FR/DE = 5). Slechts
- * een hint voor de geocoder: we cappen confidence niet, dat is de
- * verantwoordelijkheid van de geocoding engine.
+ *   2. city als eigen segment na property-type keyword:
+ *        BE: /nl/pand/te-koop/huis/sint-idesbald/<id>  → city=Sint-Idesbald
+ *        FR: /properiete/a-vendre/maison/glabbeek/<id> → city=Glabbeek
  *
- * Retourneert {} als er niks plausibels gevonden wordt.
+ *   3. (geen match) — retourneert lege object.
+ *
+ * Postcode-only-uit-URL is genoeg voor de geocoder; city-only is iets
+ * minder precies maar werkt prima voor Belgische / Nederlandse / FR /
+ * DE gemeenten via Nominatim.
  */
 function extractAddressFromUrl(
   url: string,
@@ -284,6 +287,7 @@ function extractAddressFromUrl(
     return {};
   }
 
+  // Pattern 1: city+postal samen
   const digits = country === "FR" || country === "DE" ? "5" : "4";
   const numWord = new RegExp(`\\b(\\d{${digits}})[-_/]([a-z][a-z-]{2,})`, "i");
   const wordNum = new RegExp(`\\b([a-z][a-z-]{2,})[-_/](\\d{${digits}})\\b`, "i");
@@ -296,6 +300,30 @@ function extractAddressFromUrl(
   if (match) {
     return { postalCode: match[2], city: titleCase(match[1]!) };
   }
+
+  // Pattern 2: city als segment direct na property-type keyword.
+  // Property-type keywords (volledig path-segment, niet substring).
+  const PROPERTY_TYPE_KEYWORDS = new Set([
+    "huis", "huizen", "woning", "woningen", "villa",
+    "appartement", "appartements", "apartment",
+    "maison", "maisons", "propriete", "properiete", "propriétés",
+    "haus", "häuser", "wohnung", "wohnungen",
+    "house", "houses", "property", "properties",
+  ]);
+  const segments = pathname.split("/").filter(Boolean);
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (PROPERTY_TYPE_KEYWORDS.has(segments[i]!)) {
+      const candidate = segments[i + 1]!;
+      // Volgend segment is een city-slug ALS hij niet té veel cijfers
+      // bevat (dat zijn property-IDs). Echte cities zijn meestal alleen
+      // letters + hyphens, hooguit 1-2 cijfers (bv. "1e-jaarstraat").
+      const digitCount = (candidate.match(/\d/g) ?? []).length;
+      if (digitCount >= 3) continue;
+      if (candidate.length < 3) continue;
+      return { city: titleCase(candidate) };
+    }
+  }
+
   return {};
 }
 
