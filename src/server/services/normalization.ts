@@ -362,15 +362,38 @@ function titleCase(slug: string): string {
     .trim();
 }
 
+/**
+ * Strip HTML naar leesbare tekst voor de rule-based extractor / display.
+ *
+ * Verwijdert in volgorde:
+ *   1. <script>, <style>, <noscript>, <svg> blokken (incl. inhoud)
+ *   2. CSS-in-JS class-definities die als platte tekst doorlekken
+ *      (Emotion / styled-components hash classes als
+ *      `_9112aa7acc...{color:#252526;...}`)
+ *   3. Alle overgebleven HTML-tags
+ *   4. HTML entities → echte chars
+ *   5. Whitespace normaliseren
+ */
 function stripHtml(s: string): string {
   return s
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+    // CSS-class-definities die door React/Next/Emotion-CSS-in-JS als
+    // platte tekst in de HTML belanden: `_<hash>{prop:val;...}` of
+    // `.<class>{...}` of `#<id>{...}`. Schrijf ze weg.
+    .replace(/[._#][a-z0-9-]{6,}\s*\{[^{}]*\}/gi, " ")
+    // Lossere variant: alles tussen { en } dat eruitziet als CSS props
+    // (kvp's gescheiden door ;).
+    .replace(/\{[^{}]*?:[^{}]*?;[^{}]*\}/g, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
     .replace(/\s+/g, " ")
     .trim();
 }

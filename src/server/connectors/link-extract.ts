@@ -76,6 +76,11 @@ export const PATH_DENY_LIST = [
   /\/mieten\//i,
   /\/for[-_]?rent\//i,
   /\/(rent|rental)\//i,
+  // Appartementen — gebruiker wil alleen huizen + bijzondere objecten.
+  /\/appartement(s|en)?\//i,
+  /\/apartment(s)?\//i,
+  /\/wohnung(en)?\//i,
+  /\/studio(s)?\//i,
 ];
 
 /**
