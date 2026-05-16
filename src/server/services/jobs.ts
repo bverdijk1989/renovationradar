@@ -219,14 +219,19 @@ export async function runAllActiveSources(): Promise<RunAllResult> {
   // tot ~60/min — daarom cap op 100 per cron-tick. Resterende listings
   // worden bij de volgende run opgepakt (eventueel via een aparte timer
   // op /api/geocoding/run-pending als de queue te groot wordt).
-  const geocode = await geocodePending({ limit: 100 }).catch(() => ({
-    processed: 0,
-    succeeded: 0,
-    fromCache: 0,
-    estimated: 0,
-    skipped: 0,
-    failed: 0,
-  }));
+  const geocode = await geocodePending({ limit: 100 }).catch((err) => {
+    // Niet stilzwijgend slikken — surfaceren naar de journal-log zodat
+    // we weten waarom de stap geen ListingLocation rows toevoegde.
+    console.error("[runAllActiveSources] geocodePending failed:", err);
+    return {
+      processed: 0,
+      succeeded: 0,
+      fromCache: 0,
+      estimated: 0,
+      skipped: 0,
+      failed: 0,
+    };
+  });
 
   return {
     totalSources: sources.length,
