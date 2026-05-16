@@ -8,6 +8,29 @@ import type {
 import { assertXmlLooksValid, readTag, splitBlocks } from "./xml";
 
 /**
+ * Deny-list voor sitemap entries die nooit een individuele property
+ * vertegenwoordigen: agency/kantoor profielen, blog-artikelen, account
+ * pagina's, etc. Sites zetten deze in hun sitemap voor SEO, maar wij
+ * willen ze niet als RawListing aanmaken.
+ */
+const PATH_DENY_LIST = [
+  /\/(kantoor|agence|agency|agent|office|equipe|team)\//i,
+  /\/(blog|news|article|actualit[eé]s?|nieuws|press)\//i,
+  /\/(over[-_]?ons|about|contact|equipe|team)/i,
+  /\/(login|account|wachtwoord|password|inschrijven)/i,
+  /\/(wp-content|wp-admin|cgi-bin)\//i,
+];
+
+function isAllowedPath(loc: string): boolean {
+  try {
+    const path = new URL(loc).pathname;
+    return !PATH_DENY_LIST.some((re) => re.test(path));
+  } catch {
+    return true; // op parse-failure niet blokkeren, downstream regelt 'm
+  }
+}
+
+/**
  * SitemapConnector — fetches a sitemap.xml (or sitemap-index) and emits a
  * RawListingDraft for every `<url>` entry.
  *
@@ -132,6 +155,9 @@ export class SitemapConnector implements SourceConnector {
       const loc = readTag(block, "loc");
       if (!loc) continue;
       if (cfg.urlPattern && !loc.includes(cfg.urlPattern)) continue;
+      // Filter agency/blog/account-pages weg — die staan vaak in sitemaps
+      // voor SEO maar zijn geen properties.
+      if (!isAllowedPath(loc)) continue;
       const lastmod = readTag(block, "lastmod");
       const draft: RawListingDraft = {
         externalId: loc,
