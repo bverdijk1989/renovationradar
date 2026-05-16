@@ -7,7 +7,7 @@ import { z } from "zod";
 import { MAX_RADIUS_KM_DEFAULT } from "@/lib/geo";
 
 export const DEFAULT_CRITERIA = Object.freeze({
-  maxPriceEur: 200_000,
+  maxPriceEur: 250_000,
   minLandM2: 10_000, // 1 hectare
   countries: ["FR", "BE", "DE"] as const,
   maxDistanceKm: MAX_RADIUS_KM_DEFAULT,
