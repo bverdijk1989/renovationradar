@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Database } from "lucide-react";
 import { EmptyState } from "@/components/states/empty-state";
 import { SourcesTable } from "./sources-table";
+import { RunCrawlButton } from "./run-crawl-button";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export default async function SourcesPage() {
       <PageHeader
         title="Bronbeheer"
         description="Source Registry — robots/terms/legal status, activeren/deactiveren, rate limits. Connectors mogen alleen draaien op status=active + legalStatus=green."
+        actions={<RunCrawlButton />}
       />
       {sources.length === 0 ? (
         <EmptyState

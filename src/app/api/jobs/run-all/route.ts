@@ -1,36 +1,55 @@
 import type { NextRequest } from "next/server";
 import { withApi } from "@/server/api/handler";
-import { ok, ForbiddenError, UnauthorizedError } from "@/server/api/http";
+import { ok, UnauthorizedError } from "@/server/api/http";
+import { getActor } from "@/server/api/auth";
+import { auditLog } from "@/server/api/audit";
 import { runAllActiveSources } from "@/server/services/jobs";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Cron-getriggerd endpoint dat één CrawlJob per actieve+groene bron
- * aanmaakt en uitvoert. Bedoeld voor de systemd timer; admin-cookie/header
- * niet vereist. In plaats daarvan: een gedeeld geheim via env-var.
+ * Trigger crawl + normalize + geocode voor alle active+green sources.
  *
- *   curl -X POST -H "Authorization: Bearer $CRON_TOKEN" \
- *        http://localhost:3017/api/jobs/run-all
- *
- * `CRON_TOKEN` moet in de .env staan (mode 600). Als het env-var niet
- * geset is geeft het endpoint 403 — dat voorkomt dat de cron per ongeluk
- * publiek bereikbaar is.
- *
- * Constant-time vergelijking om timing-attacks op de token uit te sluiten.
+ * Twee auth-modi:
+ *   - Bearer CRON_TOKEN: voor de systemd timer (geen cookie nodig)
+ *   - Admin role via dev-cookie/header: voor de "Start nieuwe crawl"
+ *     knop op /sources
  */
 export const POST = withApi(async (req: NextRequest) => {
-  const expected = process.env.CRON_TOKEN;
-  if (!expected || expected.length < 16) {
-    throw new ForbiddenError("CRON_TOKEN not configured on server");
-  }
+  const cronToken = process.env.CRON_TOKEN;
   const header = req.headers.get("authorization") ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  const provided = match?.[1] ?? "";
-  if (!timingSafeEqual(provided, expected)) {
-    throw new UnauthorizedError("Invalid or missing cron token");
+  const bearerMatch = header.match(/^Bearer\s+(.+)$/i);
+  const provided = bearerMatch?.[1] ?? "";
+  const validCronCall =
+    !!cronToken &&
+    cronToken.length >= 16 &&
+    timingSafeEqual(provided, cronToken);
+
+  let adminId: string | null = null;
+  if (!validCronCall) {
+    const actor = await getActor(req);
+    if (!actor.user || actor.user.role !== "admin") {
+      throw new UnauthorizedError(
+        "Crawl-trigger vereist admin-rol of geldige Bearer CRON_TOKEN",
+      );
+    }
+    adminId = actor.user.id;
   }
+
   const result = await runAllActiveSources();
+  await auditLog({
+    req,
+    userId: adminId,
+    action: "crawl_started",
+    entityType: "crawl_job",
+    entityId: null,
+    meta: {
+      trigger: validCronCall ? "cron" : "admin",
+      sources: result.totalSources,
+      succeeded: result.succeeded,
+      failed: result.failed,
+    },
+  });
   return ok(result);
 });
 
