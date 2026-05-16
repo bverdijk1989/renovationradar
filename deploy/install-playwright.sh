@@ -39,10 +39,12 @@ apt-get update -qq
 apt-get install -qq -y \
   fonts-liberation \
   libnss3 libnspr4 libcups2t64 \
-  libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
+  libxcomposite1 libxdamage1 libxrandr2 libxfixes3 \
+  libgbm1 \
   libpango-1.0-0 libcairo2 libasound2t64 libatspi2.0-0t64 \
   libatk1.0-0t64 libatk-bridge2.0-0t64 \
   libwayland-client0 libx11-xcb1 libxkbcommon0 \
+  libxshmfence1 libxss1 \
   || fail "apt install van system libs faalde."
 ok "System libs ok."
 
@@ -55,11 +57,13 @@ sudo -u "${APP_USER}" -- bash -lc "cd ${APP_DIR} && pnpm dlx playwright@1.49.1 i
   || fail "Playwright chromium download faalde."
 
 # ---------- 3. Binary-pad vinden + persisten in .env ------------------------
+# Playwright's cache zit op de HOME van de app-user, die meestal ${APP_DIR}
+# is (niet /home/${APP_USER}). Zoek op beide plekken.
 CHROMIUM_PATH=$(sudo -u "${APP_USER}" -- bash -lc \
-  "find /home/${APP_USER}/.cache/ms-playwright -name 'chrome' -type f 2>/dev/null | head -1")
+  "find ${APP_DIR}/.cache/ms-playwright /home/${APP_USER}/.cache/ms-playwright /root/.cache/ms-playwright -name 'chrome' -type f 2>/dev/null | grep chrome-linux | head -1")
 
 [[ -n "${CHROMIUM_PATH}" && -x "${CHROMIUM_PATH}" ]] || \
-  fail "Chromium binary niet gevonden in ~/.cache/ms-playwright."
+  fail "Chromium binary niet gevonden in ms-playwright cache."
 ok "Chromium binary: ${CHROMIUM_PATH}"
 
 log "CHROMIUM_PATH in .env zetten…"
