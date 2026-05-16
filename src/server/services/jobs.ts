@@ -12,6 +12,7 @@ import type { RunSearchJobInput } from "../schemas/jobs";
 import { runConnectorJob } from "../connectors";
 import type { CrawlRunResult } from "../connectors";
 import { normalizePending } from "./normalization";
+import { geocodePending } from "../geocoding";
 
 type ListQuery = z.infer<typeof JobListQuerySchema>;
 
@@ -127,6 +128,14 @@ export type RunAllResult = {
     succeeded: number;
     failed: number;
   };
+  geocode: {
+    processed: number;
+    succeeded: number;
+    fromCache: number;
+    estimated: number;
+    skipped: number;
+    failed: number;
+  };
 };
 
 /**
@@ -193,6 +202,20 @@ export async function runAllActiveSources(): Promise<RunAllResult> {
     finishedAt: new Date().toISOString(),
   }));
 
+  // Geocoding: voor listings die net gepersisteerd zijn maar nog geen
+  // ListingLocation hebben. Nominatim's 1 req/sec policy limiteert ons
+  // tot ~60/min — daarom cap op 100 per cron-tick. Resterende listings
+  // worden bij de volgende run opgepakt (eventueel via een aparte timer
+  // op /api/geocoding/run-pending als de queue te groot wordt).
+  const geocode = await geocodePending({ limit: 100 }).catch(() => ({
+    processed: 0,
+    succeeded: 0,
+    fromCache: 0,
+    estimated: 0,
+    skipped: 0,
+    failed: 0,
+  }));
+
   return {
     totalSources: sources.length,
     succeeded,
@@ -205,5 +228,6 @@ export async function runAllActiveSources(): Promise<RunAllResult> {
       succeeded: normalize.succeeded,
       failed: normalize.failed,
     },
+    geocode,
   };
 }

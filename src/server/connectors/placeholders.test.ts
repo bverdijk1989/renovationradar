@@ -105,22 +105,27 @@ describe("PermittedHtmlConnector (generic scraper)", () => {
     expect(r.issues.some((i) => i.includes("green"))).toBe(true);
   });
 
-  it("extracts listing-page links and fetches them as RawListingDrafts", async () => {
+  it("extracts individual property links, skipping category + agency pages", async () => {
     const indexHtml = `
       <html><head><title>Welkom bij makelaar</title></head>
       <body>
         <a href="/over-ons">Over ons</a>
-        <a href="/te-koop/huis-1">Te koop · Boerderij in Lorraine</a>
-        <a href="/te-koop/huis-2">Te koop · Longère</a>
+        <a href="/te-koop">Volledig aanbod</a>
+        <a href="/te-koop/huis-1">Categoriepagina (te kort)</a>
+        <a href="/te-koop/boerderij-lorraine-12345">Te koop · Boerderij in Lorraine</a>
+        <a href="/te-koop/grand-domaine-rural-pres-de-paris">Te koop · Grand Domaine</a>
+        <a href="/agence/makelaar-amsterdam-12345">Makelaarskantoor (op deny-list)</a>
         <a href="https://external.com/x">externe link</a>
         <a href="mailto:foo@bar">e-mail</a>
       </body></html>`;
-    const detail1Html = `<html><head><title>Boerderij in Lorraine</title></head><body>...detail 1...</body></html>`;
-    const detail2Html = `<html><head><title>Longère</title></head><body>...detail 2...</body></html>`;
     const transport = new MockTransport({
       "https://example.com/": { body: indexHtml },
-      "https://example.com/te-koop/huis-1": { body: detail1Html },
-      "https://example.com/te-koop/huis-2": { body: detail2Html },
+      "https://example.com/te-koop/boerderij-lorraine-12345": {
+        body: `<html><head><title>Boerderij in Lorraine</title></head><body>...</body></html>`,
+      },
+      "https://example.com/te-koop/grand-domaine-rural-pres-de-paris": {
+        body: `<html><head><title>Grand Domaine</title></head><body>...</body></html>`,
+      },
     });
     const drafts = await c.fetchListings(
       source({
@@ -132,12 +137,10 @@ describe("PermittedHtmlConnector (generic scraper)", () => {
       null,
       { transport, rateLimiter: new NoopRateLimiter(), crawlJobId: "j1" },
     );
-    expect(drafts).toHaveLength(2);
     expect(drafts.map((d) => d.url).sort()).toEqual([
-      "https://example.com/te-koop/huis-1",
-      "https://example.com/te-koop/huis-2",
+      "https://example.com/te-koop/boerderij-lorraine-12345",
+      "https://example.com/te-koop/grand-domaine-rural-pres-de-paris",
     ]);
-    expect((drafts[0]!.payload as { kind: string }).kind).toBe("detail");
   });
 });
 

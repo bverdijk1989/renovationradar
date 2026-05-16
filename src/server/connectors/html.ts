@@ -27,10 +27,10 @@ import type {
  * eigen connector-type ("scrape_custom").
  */
 const LISTING_LINK_HINTS_BY_LANG: Record<string, RegExp> = {
-  nl: /\/(te[-_]?koop|huis|woning|opknap|aanbod|aanbieding)\b|\/koop\//i,
-  fr: /\/(a[-_]?vendre|vente|maison|propriete|propriété|annonce)\b/i,
+  nl: /\/(te[-_]?koop|huis|woning|opknap|aanbod|aanbieding|chateau|chateaux)\b|\/koop\//i,
+  fr: /\/(a[-_]?vendre|vente|maison|propriete|propriété|annonce|chateau|château)\b/i,
   de: /\/(zu[-_]?verkaufen|verkauf|haus|immobilie|kaufen|angebot)\b/i,
-  en: /\/(for[-_]?sale|house|property|listing)\b/i,
+  en: /\/(for[-_]?sale|house|property|listing|chateau)\b/i,
 };
 
 const ALL_HINTS = new RegExp(
@@ -39,6 +39,41 @@ const ALL_HINTS = new RegExp(
     .join("|"),
   "i",
 );
+
+/**
+ * Deny-list: paden onder deze prefixes zijn nooit een individuele
+ * huis-pagina (al matchen ze toevallig een keyword). Houdt agency-indexen,
+ * blog-artikelen en account-pages buiten de scraper-batch.
+ */
+const PATH_DENY_LIST = [
+  /^\/agence(s)?\//i,
+  /^\/agency\//i,
+  /^\/makelaar(s)?\//i,
+  /^\/agentschap\//i,
+  /^\/blog\//i,
+  /^\/news\//i,
+  /^\/article\//i,
+  /^\/actualit(e|é)s?\//i,
+  /^\/nieuws\//i,
+  /^\/wp-content\//i,
+  /^\/wp-admin\//i,
+  /^\/cgi-bin\//i,
+  /^\/contact/i,
+  /^\/about/i,
+  /^\/over[-_]ons/i,
+  /^\/equipe/i,
+  /^\/login/i,
+  /^\/mon[-_]/i,
+];
+
+/**
+ * Een property-pagina heeft ALMOST ALWAYS één van deze patterns:
+ *   - Een numerieke ID van ≥3 cijfers ergens in het pad ("/chateau-12345")
+ *   - Een slug met ≥3 hyphens ("/grand-domaine-pres-de-rouen")
+ * Categoriepagina's zoals "/achat/maison" of "/te-koop" matchen niet.
+ */
+const PROPERTY_ID_RE = /\d{3,}/;
+const SLUG_RE = /\/[a-z0-9]+(?:-[a-z0-9]+){2,}/i;
 
 const HREF_RE = /<a\b[^>]*\bhref\s*=\s*("([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/a>/gi;
 const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i;
@@ -173,9 +208,17 @@ export class PermittedHtmlConnector implements SourceConnector {
 // ---------------------------------------------------------------------------
 
 /**
- * Zoek <a href="..."> tags waarvan de URL of de link-tekst signaalwoorden
- * bevat ("te koop", "à vendre", "for sale", "zu verkaufen"). Resolved tegen
- * de page-URL, gefilterd op same-host, deduped, gecapt op max.
+ * Zoek <a href="..."> tags die naar een INDIVIDUELE property-pagina wijzen.
+ *
+ * Een URL telt mee als:
+ *   1. Hij staat NIET op de path-deny-list (geen agency-index, blog, contact).
+ *   2. Hij bevat een listing-keyword in pad (te-koop / à-vendre / etc.) OF
+ *      de link-tekst zegt expliciet "te koop" / "à vendre" / etc.
+ *   3. Hij heeft een property-pattern: een numerieke ID van ≥3 cijfers OF
+ *      een slug met ≥3 hyphens. Zo verdwijnen `/achat/maison` (categorie),
+ *      `/te-koop` (overzicht), `/agence/.../achat` (kantoor-pagina) etc.
+ *
+ * Same-host gehandhaafd; gededuped op canonical URL; gecapt op `max`.
  */
 function extractListingLinks(
   html: string,
@@ -205,7 +248,12 @@ function extractListingLinks(
     // overslaan.
     if (abs.host !== baseUrl.host) continue;
 
-    const pathAndQuery = `${abs.pathname}${abs.search}`;
+    const path = abs.pathname;
+    const pathAndQuery = `${path}${abs.search}`;
+
+    // Deny-list eerst — sneller falen op evident geen-listing paden.
+    if (PATH_DENY_LIST.some((re) => re.test(path))) continue;
+
     const matchesUrl = ALL_HINTS.test(pathAndQuery);
     const matchesText =
       text.length >= 3 &&
@@ -216,10 +264,16 @@ function extractListingLinks(
         text.includes("zu verkaufen") ||
         text.includes("zum verkauf"));
 
-    if (matchesUrl || matchesText) {
-      out.add(abs.toString());
-      if (out.size >= max) break;
-    }
+    if (!matchesUrl && !matchesText) continue;
+
+    // Specifiek-genoeg test: alleen URLs die er als een individuele
+    // property uitzien (numerieke ID OF lange slug).
+    const looksSpecific =
+      PROPERTY_ID_RE.test(path) || SLUG_RE.test(path);
+    if (!looksSpecific) continue;
+
+    out.add(abs.toString());
+    if (out.size >= max) break;
   }
   return out;
 }
