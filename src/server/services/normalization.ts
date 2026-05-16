@@ -382,11 +382,15 @@ function stripHtml(s: string): string {
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
     // CSS-class-definities die door React/Next/Emotion-CSS-in-JS als
     // platte tekst in de HTML belanden: `_<hash>{prop:val;...}` of
-    // `.<class>{...}` of `#<id>{...}`. Schrijf ze weg.
-    .replace(/[._#][a-z0-9-]{6,}\s*\{[^{}]*\}/gi, " ")
-    // Lossere variant: alles tussen { en } dat eruitziet als CSS props
-    // (kvp's gescheiden door ;).
+    // `.<class>{...}` of `#<id>{...}`. Het underscore-zonder-prefix
+    // patroon (`_9112aa...{...}`) komt vaak voor bij Emotion's hashed
+    // classnames. Komma-separated selectors meerekenen.
+    .replace(/(?:[._#]?[a-z0-9_-]{4,}\s*,?\s*)+\{[^{}]*\}/gi, " ")
+    // Lossere fallback: alles tussen { en } dat er als CSS uitziet
+    // (key:value;-paren). Pakt media-queries en losse {...} blokken.
     .replace(/\{[^{}]*?:[^{}]*?;[^{}]*\}/g, " ")
+    // Ook overgebleven losse property-paren (`color:#aaa;`, `font-size:1em;`).
+    .replace(/[a-z-]+:\s*[^;{}]+;/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
