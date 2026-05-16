@@ -58,9 +58,13 @@ type GeocodingDependencies = {
 
 function defaultDeps(transport?: HttpTransport, userAgent?: string): GeocodingDependencies {
   const tx = transport ?? new FetchTransport();
+  // Nominatim policy: vereist een descriptive UA met echte contact info.
+  // Lees uit env-var; default heeft renovationradar.aegiscore.nl als
+  // identificatie. Generieke example.com UAs worden geblokkeerd.
   const ua =
     userAgent ??
-    "RenovationRadar/0.1 (+contact: admin@example.com; geocoding pipeline)";
+    process.env.APP_USER_AGENT ??
+    "RenovationRadarEU/0.1 (+https://renovationradar.aegiscore.nl; contact: admin@aegiscore.nl; geocoding pipeline)";
   return {
     primary: new NominatimProvider(tx, { userAgent: ua }),
     fallback: new EstimatedRegionProvider(),

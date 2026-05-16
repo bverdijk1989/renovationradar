@@ -6,14 +6,23 @@ import type { HttpResponse, HttpTransport } from "./types";
  * responses into TransportError (with status + body preview) and applies a
  * default timeout.
  */
+/**
+ * Default User-Agent. Nominatim (en andere OSM-services) blokkeert
+ * placeholder UAs als `example.com`. Override via env-var APP_USER_AGENT
+ * met een echte URL en contact zodat onze server niet als bot wordt
+ * geblokkeerd. Format: `<app>/<versie> (+<url>; contact: <email>)`.
+ */
+const DEFAULT_USER_AGENT =
+  process.env.APP_USER_AGENT ??
+  "RenovationRadarEU/0.1 (+https://renovationradar.aegiscore.nl; contact: admin@aegiscore.nl)";
+
 export class FetchTransport implements HttpTransport {
   constructor(
     private readonly defaults: {
       userAgent: string;
       timeoutMs: number;
     } = {
-      userAgent:
-        "RenovationRadar/0.1 (+https://renovationradar.example; contact: admin@example.com)",
+      userAgent: DEFAULT_USER_AGENT,
       timeoutMs: 15_000,
     },
   ) {}
