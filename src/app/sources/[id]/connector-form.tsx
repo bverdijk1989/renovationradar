@@ -74,6 +74,9 @@ export function SourceConnectorForm({
       ? initialConnectorConfig.urlPattern
       : "",
   );
+  const [followLinks, setFollowLinks] = useState(
+    initialConnectorConfig.followLinks === true,
+  );
   const [listingPageUrl, setListingPageUrl] = useState(
     typeof initialConnectorConfig.listingPageUrl === "string"
       ? initialConnectorConfig.listingPageUrl
@@ -96,6 +99,7 @@ export function SourceConnectorForm({
         feedUrl,
         sitemapUrl,
         urlPattern,
+        followLinks,
         listingPageUrl,
         maxListings: Number.parseInt(maxListings, 10) || 50,
       });
@@ -170,28 +174,47 @@ export function SourceConnectorForm({
         ) : null}
 
         {strategy === "sitemap" ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="sitemapUrl">Sitemap-URL</Label>
-              <Input
-                id="sitemapUrl"
-                value={sitemapUrl}
-                onChange={(e) => setSitemapUrl(e.target.value)}
-                placeholder="https://example.com/sitemap.xml"
-              />
+          <div className="space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="sitemapUrl">Sitemap-URL</Label>
+                <Input
+                  id="sitemapUrl"
+                  value={sitemapUrl}
+                  onChange={(e) => setSitemapUrl(e.target.value)}
+                  placeholder="https://example.com/sitemap.xml"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="urlPattern">URL-filter (optioneel)</Label>
+                <Input
+                  id="urlPattern"
+                  value={urlPattern}
+                  onChange={(e) => setUrlPattern(e.target.value)}
+                  placeholder="/property/"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Alleen URLs die deze substring bevatten worden opgepikt.
+                </p>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="urlPattern">URL-filter (optioneel)</Label>
-              <Input
-                id="urlPattern"
-                value={urlPattern}
-                onChange={(e) => setUrlPattern(e.target.value)}
-                placeholder="/property/"
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={followLinks}
+                onChange={(e) => setFollowLinks(e.target.checked)}
+                className="mt-1 h-4 w-4"
               />
-              <p className="text-xs text-muted-foreground">
-                Alleen URLs die deze substring bevatten worden opgepikt.
-              </p>
-            </div>
+              <span>
+                <strong>Volg links binnen sitemap-entries</strong> (depth-2 crawl)
+                <p className="text-xs text-muted-foreground">
+                  Aanvinken als de sitemap city-/categorie-overzichten bevat
+                  in plaats van individuele properties. De scraper fetcht dan
+                  elke entry en haalt detail-links eruit. Veel duurder
+                  (cap: 100 properties per run i.p.v. 1000 sitemap-URLs).
+                </p>
+              </span>
+            </label>
           </div>
         ) : null}
 
@@ -268,6 +291,7 @@ function buildPatchBody(
     feedUrl: string;
     sitemapUrl: string;
     urlPattern: string;
+    followLinks: boolean;
     listingPageUrl: string;
     maxListings: number;
   },
@@ -288,6 +312,7 @@ function buildPatchBody(
           ...(vals.urlPattern.trim()
             ? { urlPattern: vals.urlPattern.trim() }
             : {}),
+          ...(vals.followLinks ? { followLinks: true } : {}),
         },
       };
     case "scrape":

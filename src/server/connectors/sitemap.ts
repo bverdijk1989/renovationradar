@@ -6,6 +6,7 @@ import type {
   SourceValidationResult,
 } from "./types";
 import { assertXmlLooksValid, readTag, splitBlocks } from "./xml";
+import { extractCandidateLinks, extractTitle } from "./link-extract";
 
 /**
  * Deny-list voor sitemap entries die nooit een individuele property
@@ -85,11 +86,16 @@ export class SitemapConnector implements SourceConnector {
       sitemapUrl?: string;
       urlPattern?: string;
       followIndex?: boolean;
+      followLinks?: boolean;
       maxEntries?: number;
     };
     if (!cfg.sitemapUrl) return [];
 
-    const maxEntries = Math.max(1, Math.min(50_000, cfg.maxEntries ?? 1_000));
+    // Bij followLinks=true fetcht hij elke <url> + extract'ert detail-links.
+    // Veel duurder dan plain sitemap-only mode (1 fetch + ~N child fetches),
+    // dus kleinere default cap zodat één cron-run binnen 30 min blijft.
+    const defaultCap = cfg.followLinks ? 100 : 1_000;
+    const maxEntries = Math.max(1, Math.min(50_000, cfg.maxEntries ?? defaultCap));
     const out: RawListingDraft[] = [];
     await this.crawl(
       cfg.sitemapUrl,
@@ -108,7 +114,7 @@ export class SitemapConnector implements SourceConnector {
   /** Recursive: handles `<sitemapindex>` ⊕ `<urlset>` */
   private async crawl(
     url: string,
-    cfg: { urlPattern?: string; followIndex?: boolean },
+    cfg: { urlPattern?: string; followIndex?: boolean; followLinks?: boolean },
     source: Source,
     profile: SearchProfile | null,
     ctx: FetchContext,
@@ -150,35 +156,99 @@ export class SitemapConnector implements SourceConnector {
 
     // Plain urlset.
     const entries = splitBlocks(res.body, "url");
+    const followLinks = cfg.followLinks === true;
+
     for (const block of entries) {
       if (out.length >= maxEntries) break;
       const loc = readTag(block, "loc");
       if (!loc) continue;
       if (cfg.urlPattern && !loc.includes(cfg.urlPattern)) continue;
-      // Filter agency/blog/account-pages weg — die staan vaak in sitemaps
-      // voor SEO maar zijn geen properties.
       if (!isAllowedPath(loc)) continue;
       const lastmod = readTag(block, "lastmod");
-      const draft: RawListingDraft = {
-        externalId: loc,
-        url: loc,
-        payload: {
-          source: "sitemap",
-          sitemapUrl: url,
-          loc,
-          lastmod,
-        },
-        language: null,
-      };
+
       if (profile) {
-        // Sitemaps don't carry titles — we can only filter on URL substrings.
-        if (
-          !profile.terms.some((t) => loc.toLowerCase().includes(t.toLowerCase()))
-        ) {
+        // Sitemaps dragen geen titels — alleen filter op URL-substrings.
+        if (!profile.terms.some((t) => loc.toLowerCase().includes(t.toLowerCase()))) {
           continue;
         }
       }
-      out.push(draft);
+
+      if (followLinks) {
+        // Depth-2: deze sitemap-entry is een index/city-page. Fetch 'm en
+        // emit elke individuele property-link binnen als RawListing met
+        // de raw HTML (zelfde shape als de HTML-scraper). Normalize-stap
+        // pakt 'm dan op via het html-generic pad.
+        if (out.length >= maxEntries) break;
+        await ctx.rateLimiter.wait(source.id, source.rateLimitPerMinute ?? 30);
+        try {
+          const indexRes = await ctx.transport.get(loc, {
+            signal: ctx.signal,
+            headers: source.userAgent
+              ? { "User-Agent": source.userAgent }
+              : undefined,
+          });
+          const indexBaseUrl = new URL(indexRes.url ?? loc);
+          const remaining = maxEntries - out.length;
+          const { details } = extractCandidateLinks(
+            indexRes.body,
+            indexBaseUrl,
+            remaining,
+            0, // depth-2; geen derde laag
+          );
+
+          // Per detail-URL: fetch en bewaar HTML zodat normalize echte
+          // velden kan extracten. Sommige sites zijn JS-rendered; voor
+          // die levert dit alsnog "kale" HTML zonder property-fields,
+          // maar daar kan een latere per-site parser nog op werken.
+          for (const detailUrl of details) {
+            if (out.length >= maxEntries) break;
+            await ctx.rateLimiter.wait(source.id, source.rateLimitPerMinute ?? 30);
+            try {
+              const detailRes = await ctx.transport.get(detailUrl, {
+                signal: ctx.signal,
+                headers: source.userAgent
+                  ? { "User-Agent": source.userAgent }
+                  : undefined,
+              });
+              out.push({
+                externalId: detailUrl,
+                url: detailUrl,
+                payload: {
+                  source: "html-generic",
+                  kind: "detail",
+                  sitemapUrl: url,
+                  indexUrl: loc,
+                  title: extractTitle(detailRes.body),
+                  html: truncateHtml(detailRes.body, 200_000),
+                },
+                language: null,
+              });
+            } catch {
+              continue;
+            }
+          }
+        } catch {
+          // Eén falende index-page mag niet de hele run stoppen.
+          continue;
+        }
+      } else {
+        // Default: emit de sitemap-URL als-is (URL-only payload).
+        out.push({
+          externalId: loc,
+          url: loc,
+          payload: {
+            source: "sitemap",
+            sitemapUrl: url,
+            loc,
+            lastmod,
+          },
+          language: null,
+        });
+      }
     }
   }
+}
+
+function truncateHtml(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max)}…[truncated ${s.length - max}b]` : s;
 }
