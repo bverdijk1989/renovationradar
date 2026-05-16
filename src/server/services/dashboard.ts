@@ -148,12 +148,17 @@ export async function getSpecialObjects(take = 12) {
   });
 }
 
+/**
+ * Map-points: alle gegeocodeerde listings binnen 350 km van Venlo,
+ * niet alleen de "matches" — de map is bedoeld als overzicht van wat
+ * de scrapers oppikken. Strikt filter op prijs/land/detached gebeurt
+ * client-side via de filter-controls op /map.
+ *
+ * Listings zonder lat/lng worden uitgesloten (anders geen pin mogelijk).
+ */
 export async function getMapPoints(take = 500) {
   return prisma.normalizedListing.findMany({
     where: {
-      priceEur: { lte: DEFAULT_CRITERIA.maxPriceEur },
-      landAreaM2: { gte: DEFAULT_CRITERIA.minLandM2 },
-      isDetached: "yes",
       availability: { in: ["for_sale", "under_offer", "unknown"] },
       location: {
         is: {
@@ -168,13 +173,18 @@ export async function getMapPoints(take = 500) {
       titleNl: true,
       titleOriginal: true,
       priceEur: true,
+      landAreaM2: true,
+      isDetached: true,
       propertyType: true,
       specialObjectType: true,
       location: { select: { lat: true, lng: true, distanceFromVenloKm: true } },
       score: { select: { compositeScore: true } },
     },
     take,
-    orderBy: { score: { compositeScore: "desc" } },
+    orderBy: [
+      { score: { compositeScore: "desc" } },
+      { firstSeenAt: "desc" },
+    ],
   });
 }
 
