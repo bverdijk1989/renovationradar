@@ -121,6 +121,27 @@ export class RenderedFetchTransport implements HttpTransport {
             { status },
           );
         }
+        // Scroll naar onderen om Intersection-Observer-/lazy-load
+        // images te triggeren. Veel modern real-estate sites
+        // (Century21, Immoweb) tonen property-foto's pas wanneer ze
+        // in-viewport komen. Korte timeout om eindeloos te wachten te
+        // voorkomen als de scroll-handler faalt.
+        await page.evaluate(async () => {
+          const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          const total = document.documentElement.scrollHeight;
+          let y = 0;
+          const step = 400;
+          while (y < total) {
+            window.scrollTo(0, y);
+            await sleep(150);
+            y += step;
+          }
+          window.scrollTo(0, document.documentElement.scrollHeight);
+          await sleep(500);
+        }).catch(() => {});
+        // Extra wacht-tijd voor de net-getriggerde fetches om HTML te
+        // updaten met de geladen image-URLs.
+        await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
       } catch (err) {
         opts.signal?.removeEventListener("abort", onAbort);
         if (err instanceof TransportError) throw err;
