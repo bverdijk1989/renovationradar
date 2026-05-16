@@ -1,0 +1,28 @@
+[Unit]
+Description=Renovation Radar EU — crawl alle active sources
+Documentation=https://github.com/bverdijk1989/renovationradar
+After=network.target renovationradar.service
+Requires=renovationradar.service
+
+[Service]
+Type=oneshot
+User=__APP_USER__
+Group=__APP_USER__
+EnvironmentFile=__APP_DIR__/.env
+# `--fail` zorgt dat curl exitcode != 0 geeft op HTTP 4xx/5xx, zodat systemd
+# de run als "failed" registreert (zichtbaar in `systemctl list-timers`).
+# `--max-time 1800` (30 min) — hard limit voor het complete batch-run.
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 1800 \
+  -X POST \
+  -H "Authorization: Bearer ${CRON_TOKEN}" \
+  -H "Content-Type: application/json" \
+  http://localhost:__PORT__/api/jobs/run-all
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=2000
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true

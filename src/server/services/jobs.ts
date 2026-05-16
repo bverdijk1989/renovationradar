@@ -104,3 +104,83 @@ export async function executeQueuedJob(jobId: string): Promise<CrawlRunResult> {
   if (!job) throw new NotFoundError("CrawlJob");
   return runConnectorJob(jobId);
 }
+
+export type RunAllResult = {
+  totalSources: number;
+  succeeded: number;
+  failed: number;
+  startedAt: string;
+  finishedAt: string;
+  results: Array<{
+    sourceId: string;
+    sourceName: string;
+    jobId: string;
+    ok: boolean;
+    itemsFetched: number;
+    itemsAccepted: number;
+    itemsRejected: number;
+    errorMessage?: string;
+  }>;
+};
+
+/**
+ * Auto-crawl: enqueue + execute één CrawlJob per actieve+groene bron.
+ * Bedoeld voor de systemd timer (deploy/renovationradar-crawl.timer).
+ *
+ * Geen search-profile: we doen een full sweep per source — connectors die
+ * profile-aware zijn (api/html) kunnen hun eigen interne loop draaien.
+ */
+export async function runAllActiveSources(): Promise<RunAllResult> {
+  const startedAt = new Date();
+  const sources = await prisma.source.findMany({
+    where: { status: "active", legalStatus: "green" },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+
+  const results: RunAllResult["results"] = [];
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const s of sources) {
+    const job = await prisma.crawlJob.create({
+      data: { sourceId: s.id, status: "queued" },
+    });
+    try {
+      const r = await runConnectorJob(job.id);
+      if (r.ok) succeeded++;
+      else failed++;
+      results.push({
+        sourceId: s.id,
+        sourceName: s.name,
+        jobId: job.id,
+        ok: r.ok,
+        itemsFetched: r.itemsFetched,
+        itemsAccepted: r.itemsAccepted,
+        itemsRejected: r.itemsRejected,
+        errorMessage: r.errorMessage ?? undefined,
+      });
+    } catch (e) {
+      failed++;
+      results.push({
+        sourceId: s.id,
+        sourceName: s.name,
+        jobId: job.id,
+        ok: false,
+        itemsFetched: 0,
+        itemsAccepted: 0,
+        itemsRejected: 0,
+        errorMessage: (e as Error).message,
+      });
+    }
+  }
+
+  return {
+    totalSources: sources.length,
+    succeeded,
+    failed,
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+    results,
+  };
+}

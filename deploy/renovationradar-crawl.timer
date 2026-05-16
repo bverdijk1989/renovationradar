@@ -1,0 +1,19 @@
+[Unit]
+Description=Renovation Radar EU — periodieke crawler
+Documentation=https://github.com/bverdijk1989/renovationradar
+
+[Timer]
+# Eerste run 5 min na boot (zodat de Next.js service zeker draait).
+OnBootSec=5min
+# Daarna elk uur.
+OnUnitActiveSec=1h
+# Bij een miss (server stond uit) niet inhaalrun stapelen — gewoon
+# wachten op de volgende slot.
+Persistent=false
+# Iets aan jitter om gelijktijdige spikes te vermijden als je later
+# meer crawlers toevoegt.
+RandomizedDelaySec=60
+Unit=renovationradar-crawl.service
+
+[Install]
+WantedBy=timers.target
