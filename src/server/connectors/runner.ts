@@ -50,8 +50,12 @@ export async function runConnectorJob(
     signal?: AbortSignal;
   } = {},
 ): Promise<CrawlRunResult> {
-  const transport = opts.transport ?? new FetchTransport();
   const rateLimiter = opts.rateLimiter ?? new InProcessRateLimiter();
+  // Transport-keuze valt af van source.connectorConfig.renderJs; default
+  // is FetchTransport (snel, geen browser). We laden de source-row eerst,
+  // dán pas swappen we transport indien renderJs=true.
+  let transport: HttpTransport = opts.transport ?? new FetchTransport();
+  let renderedTransport: { dispose(): Promise<void> } | null = null;
 
   // ----- Load job + source --------------------------------------------------
   const job = await prisma.crawlJob.findUnique({
@@ -60,6 +64,21 @@ export async function runConnectorJob(
   });
   if (!job) {
     throw new JobNotFoundError(`CrawlJob ${jobId} not found`);
+  }
+
+  // Source kan JS-rendering vragen via connectorConfig.renderJs=true.
+  // Alleen toepassen als de caller geen eigen transport heeft meegegeven
+  // (tests overschrijven met MockTransport en willen die niet kwijtraken).
+  if (!opts.transport) {
+    const cfg = (job.source.connectorConfig ?? {}) as { renderJs?: unknown };
+    if (cfg.renderJs === true) {
+      const { RenderedFetchTransport } = await import("./rendered-transport");
+      const rendered = new RenderedFetchTransport({
+        userAgent: job.source.userAgent ?? undefined,
+      });
+      transport = rendered;
+      renderedTransport = rendered;
+    }
   }
 
   // Tolerate `queued` and re-runs of already-`running` jobs (worker crash recovery).
@@ -131,6 +150,12 @@ export async function runConnectorJob(
     };
   } catch (err) {
     return await markJobFailed(jobId, err);
+  } finally {
+    // Chromium browser sluiten als we 'm voor deze job hadden geopend.
+    // Voorkomt RAM-lek over uurlijkse cron-runs.
+    if (renderedTransport) {
+      await renderedTransport.dispose().catch(() => {});
+    }
   }
 }
 

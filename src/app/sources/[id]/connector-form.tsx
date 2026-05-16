@@ -77,6 +77,9 @@ export function SourceConnectorForm({
   const [followLinks, setFollowLinks] = useState(
     initialConnectorConfig.followLinks === true,
   );
+  const [renderJs, setRenderJs] = useState(
+    initialConnectorConfig.renderJs === true,
+  );
   const [listingPageUrl, setListingPageUrl] = useState(
     typeof initialConnectorConfig.listingPageUrl === "string"
       ? initialConnectorConfig.listingPageUrl
@@ -100,6 +103,7 @@ export function SourceConnectorForm({
         sitemapUrl,
         urlPattern,
         followLinks,
+        renderJs,
         listingPageUrl,
         maxListings: Number.parseInt(maxListings, 10) || 50,
       });
@@ -215,6 +219,23 @@ export function SourceConnectorForm({
                 </p>
               </span>
             </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={renderJs}
+                onChange={(e) => setRenderJs(e.target.checked)}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <strong>JavaScript renderen via headless browser</strong>
+                <p className="text-xs text-muted-foreground">
+                  Voor JS-rendered portals (Century21, Immoweb, Funda) — site
+                  laadt aanbod pas na browser-JS. Vereist Chromium op de
+                  server (zie deploy/install-playwright.sh). 5-10× trager
+                  dan static fetch.
+                </p>
+              </span>
+            </label>
           </div>
         ) : null}
 
@@ -292,6 +313,7 @@ function buildPatchBody(
     sitemapUrl: string;
     urlPattern: string;
     followLinks: boolean;
+    renderJs: boolean;
     listingPageUrl: string;
     maxListings: number;
   },
@@ -313,6 +335,7 @@ function buildPatchBody(
             ? { urlPattern: vals.urlPattern.trim() }
             : {}),
           ...(vals.followLinks ? { followLinks: true } : {}),
+          ...(vals.renderJs ? { renderJs: true } : {}),
         },
       };
     case "scrape":
@@ -324,6 +347,7 @@ function buildPatchBody(
             ? { listingPageUrl: vals.listingPageUrl.trim() }
             : {}),
           maxListings: vals.maxListings,
+          ...(vals.renderJs ? { renderJs: true } : {}),
         },
       };
     case "manual":
