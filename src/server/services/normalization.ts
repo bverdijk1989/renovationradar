@@ -168,6 +168,7 @@ function buildNormalizationInput(
     // CSS-rommel op (Emotion / styled-components inline-style hashes)
     // — niet meer proberen.
     const description = p.html ? extractMetaDescription(p.html) : null;
+    const media = p.html ? extractImages(p.html, raw.url) : [];
     const fromUrl = extractAddressFromUrl(raw.url, country);
     return {
       rawListingId: raw.id,
@@ -179,6 +180,7 @@ function buildNormalizationInput(
       country,
       city: fromUrl.city,
       postalCode: fromUrl.postalCode,
+      media,
     };
   }
 
@@ -377,6 +379,90 @@ function extractMetaDescription(html: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Pak property-foto's uit een HTML page:
+ *   1. <meta property="og:image" content="..."> — door de site gecuratet,
+ *      always de hoofd-listing-foto. Bijna alle real-estate sites zetten
+ *      dit voor Facebook/Twitter sharing.
+ *   2. <img src="..."> tags die er als property-foto's uitzien:
+ *      - HTTPS URLs
+ *      - Niet evident icons/logos/avatars (filter op pad-keywords)
+ *      - Geen data: URLs
+ *      - Geen base64 inline images
+ *
+ * Maxes op 8 images om DB-rows te beperken. Resolved relative URLs
+ * tegen de page-URL.
+ */
+function extractImages(
+  html: string,
+  pageUrl: string,
+): Array<{ url: string; caption: string | null }> {
+  const out: Array<{ url: string; caption: string | null }> = [];
+  const seen = new Set<string>();
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(pageUrl);
+  } catch {
+    return [];
+  }
+
+  // 1. og:image — eerste prioriteit.
+  const ogPatterns = [
+    /<meta[^>]+\bproperty=["']og:image["'][^>]*\bcontent=["']([^"']+)["']/gi,
+    /<meta[^>]+\bcontent=["']([^"']+)["'][^>]*\bproperty=["']og:image["']/gi,
+    /<meta[^>]+\bname=["']twitter:image["'][^>]*\bcontent=["']([^"']+)["']/gi,
+  ];
+  for (const re of ogPatterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null && out.length < 8) {
+      const absolute = absolutizeUrl(m[1]!, baseUrl);
+      if (absolute && !seen.has(absolute) && isLikelyPropertyImage(absolute)) {
+        seen.add(absolute);
+        out.push({ url: absolute, caption: null });
+      }
+    }
+  }
+
+  // 2. <img src> tags — voor extra galerij-foto's.
+  const imgRe = /<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null && out.length < 8) {
+    const absolute = absolutizeUrl(m[1]!, baseUrl);
+    if (absolute && !seen.has(absolute) && isLikelyPropertyImage(absolute)) {
+      seen.add(absolute);
+      out.push({ url: absolute, caption: null });
+    }
+  }
+
+  return out;
+}
+
+function absolutizeUrl(href: string, base: URL): string | null {
+  if (!href || href.startsWith("data:")) return null;
+  try {
+    return new URL(href, base).toString();
+  } catch {
+    return null;
+  }
+}
+
+// Heuristiek: filter icons/logos/sprites/avatars/favicons uit. Echte
+// property-foto's eindigen meestal op .jpg/.jpeg/.webp en bevatten
+// vaak "photo"/"listing"/"property"/"property-image" in pad. We doen
+// niet té strikt — beter een paar logos er per ongeluk in dan échte
+// foto's te missen.
+const ICON_LIKE = /\/(icon|logo|sprite|avatar|favicon|placeholder|spinner|loader)/i;
+const SMALL_IMAGE_HINT = /[-_](thumb|small|s\d+x\d+|16x16|32x32|64x64)\b/i;
+
+function isLikelyPropertyImage(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return false;
+  if (ICON_LIKE.test(url)) return false;
+  if (SMALL_IMAGE_HINT.test(url)) return false;
+  // SVG en GIF zijn meestal UI-assets, geen property-foto's.
+  if (/\.(svg|gif)(\?|$)/i.test(url)) return false;
+  return true;
 }
 
 function decodeHtmlEntities(s: string): string {
