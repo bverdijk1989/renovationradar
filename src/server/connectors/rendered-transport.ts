@@ -108,7 +108,10 @@ export class RenderedFetchTransport implements HttpTransport {
       let status = 200;
       try {
         const response = await page.goto(url, {
-          waitUntil: this.opts.waitUntil ?? "networkidle",
+          // `domcontentloaded` is veiliger dan `networkidle` voor sites
+          // met permanente analytics-beacons / websockets — die laten
+          // `networkidle` nooit firen en blokkeren de hele pipeline.
+          waitUntil: this.opts.waitUntil ?? "domcontentloaded",
           timeout: timeoutMs,
         });
         if (response) {
@@ -121,27 +124,27 @@ export class RenderedFetchTransport implements HttpTransport {
             { status },
           );
         }
-        // Scroll naar onderen om Intersection-Observer-/lazy-load
-        // images te triggeren. Veel modern real-estate sites
-        // (Century21, Immoweb) tonen property-foto's pas wanneer ze
-        // in-viewport komen. Korte timeout om eindeloos te wachten te
-        // voorkomen als de scroll-handler faalt.
-        await page.evaluate(async () => {
-          const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-          const total = document.documentElement.scrollHeight;
-          let y = 0;
-          const step = 400;
-          while (y < total) {
-            window.scrollTo(0, y);
-            await sleep(150);
-            y += step;
-          }
-          window.scrollTo(0, document.documentElement.scrollHeight);
-          await sleep(500);
-        }).catch(() => {});
-        // Extra wacht-tijd voor de net-getriggerde fetches om HTML te
-        // updaten met de geladen image-URLs.
-        await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+        // Korte settle-tijd zodat React de eerste render kan doen.
+        await page.waitForTimeout(1_500);
+        // Scroll naar onderen — bounded met max iteraties zodat een
+        // infinite-scroll-pagina de evaluate niet eeuwig laat draaien.
+        await Promise.race([
+          page.evaluate(async () => {
+            const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+            const maxSteps = 15;
+            const step = 600;
+            for (let i = 0; i < maxSteps; i++) {
+              window.scrollTo(0, (i + 1) * step);
+              await sleep(120);
+            }
+            window.scrollTo(0, document.documentElement.scrollHeight);
+            await sleep(300);
+          }),
+          page.waitForTimeout(5_000), // hard timeout op scroll-stap
+        ]).catch(() => {});
+        // Nog een korte wacht-tijd zodat lazy-loaded image src-attrs
+        // gezet zijn voordat we content() doen.
+        await page.waitForTimeout(1_000);
       } catch (err) {
         opts.signal?.removeEventListener("abort", onAbort);
         if (err instanceof TransportError) throw err;
