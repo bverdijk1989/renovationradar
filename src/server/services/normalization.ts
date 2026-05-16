@@ -425,10 +425,32 @@ function extractImages(
     }
   }
 
-  // 2. <img src> tags — voor extra galerij-foto's.
+  // 2. <img src> tags — gangbare images.
   const imgRe = /<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = imgRe.exec(html)) !== null && out.length < 8) {
+    const absolute = absolutizeUrl(m[1]!, baseUrl);
+    if (absolute && !seen.has(absolute) && isLikelyPropertyImage(absolute)) {
+      seen.add(absolute);
+      out.push({ url: absolute, caption: null });
+    }
+  }
+
+  // 3. <img data-src> tags — lazy-loaded images (modern React apps).
+  const lazyImgRe = /<img\b[^>]*\bdata-src=["']([^"']+)["'][^>]*>/gi;
+  while ((m = lazyImgRe.exec(html)) !== null && out.length < 8) {
+    const absolute = absolutizeUrl(m[1]!, baseUrl);
+    if (absolute && !seen.has(absolute) && isLikelyPropertyImage(absolute)) {
+      seen.add(absolute);
+      out.push({ url: absolute, caption: null });
+    }
+  }
+
+  // 4. CSS background-image: url(...) — Century21 BE, Immoweb, andere
+  //    moderne portals zetten property-foto's via background-image i.p.v.
+  //    <img>. Match url('...'), url("..."), of url(...) zonder quotes.
+  const bgRe = /background-image\s*:\s*url\s*\(\s*['"]?([^'")]+?)['"]?\s*\)/gi;
+  while ((m = bgRe.exec(html)) !== null && out.length < 8) {
     const absolute = absolutizeUrl(m[1]!, baseUrl);
     if (absolute && !seen.has(absolute) && isLikelyPropertyImage(absolute)) {
       seen.add(absolute);
