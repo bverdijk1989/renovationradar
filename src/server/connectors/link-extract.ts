@@ -38,19 +38,23 @@ function escapeRegex(s: string): string {
  * blog-artikelen, account-pages, paginatie-/filter-pagina's, etc.
  */
 export const PATH_DENY_LIST = [
+  // Agency/makelaarskantoor pages (niet onze listings).
   /^\/agence(s)?\//i,
   /^\/agency\//i,
   /^\/makelaar(s)?\//i,
   /^\/agentschap\//i,
   /^\/kantoor\//i,
+  // Editorial.
   /^\/blog\//i,
   /^\/news\//i,
   /^\/article\//i,
   /^\/actualit(e|é)s?\//i,
   /^\/nieuws\//i,
+  // Infrastructure / admin.
   /^\/wp-content\//i,
   /^\/wp-admin\//i,
   /^\/cgi-bin\//i,
+  // Static info pages.
   /^\/contact/i,
   /^\/about/i,
   /^\/over[-_]ons/i,
@@ -62,6 +66,16 @@ export const PATH_DENY_LIST = [
   /^\/zoek[-_]een[-_]/i,
   /^\/trouver[-_]une[-_]/i,
   /\/page\d+\//i,
+  // Rentals — we willen ALLEEN koopwoningen. Filter alle taalvarianten:
+  //   NL: te-huur, huur     FR: a-louer, location     DE: zu-mieten, mieten   EN: for-rent, rent
+  /\/te[-_]?huur\//i,
+  /\/huur\//i,
+  /\/a[-_]?louer\//i,
+  /\/location\//i,
+  /\/zu[-_]?mieten\//i,
+  /\/mieten\//i,
+  /\/for[-_]?rent\//i,
+  /\/(rent|rental)\//i,
 ];
 
 /**
