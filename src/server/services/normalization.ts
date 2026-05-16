@@ -144,6 +144,7 @@ function buildNormalizationInput(
     const p = payload as unknown as RssPayload;
     const title = (p.title ?? "").trim();
     if (!title) return null;
+    const fromUrl = extractAddressFromUrl(raw.url, country);
     return {
       rawListingId: raw.id,
       sourceId: raw.sourceId,
@@ -152,6 +153,8 @@ function buildNormalizationInput(
       title,
       description: (p.description ?? null) || null,
       country,
+      city: fromUrl.city,
+      postalCode: fromUrl.postalCode,
     };
   }
 
@@ -164,6 +167,7 @@ function buildNormalizationInput(
     const description = p.html
       ? stripHtml(p.html.slice(0, 50_000)).slice(0, 5_000) || null
       : null;
+    const fromUrl = extractAddressFromUrl(raw.url, country);
     return {
       rawListingId: raw.id,
       sourceId: raw.sourceId,
@@ -172,6 +176,8 @@ function buildNormalizationInput(
       title,
       description,
       country,
+      city: fromUrl.city,
+      postalCode: fromUrl.postalCode,
     };
   }
 
@@ -232,6 +238,55 @@ function draftToCreateInput(
     processingStatus: "normalized",
     availability: "for_sale",
   };
+}
+
+/**
+ * Probeer city + postcode uit de URL-slug te trekken. Werkt voor de
+ * gangbare patronen die makelaarssites in NL/BE/FR/DE gebruiken:
+ *
+ *   BE: /nl/te-koop/huis/tournai-7500   → city=Tournai, postal=7500
+ *   NL: /aanbod/1234-ab-amsterdam        → city=Amsterdam, postal=1234 AB
+ *   FR: /annonce/75001-paris-villa-xyz   → city=Paris, postal=75001
+ *   DE: /haus/50667-koeln-altstadt       → city=Koeln, postal=50667
+ *
+ * Postcode-lengte hangt af van het land (BE/NL = 4, FR/DE = 5). Slechts
+ * een hint voor de geocoder: we cappen confidence niet, dat is de
+ * verantwoordelijkheid van de geocoding engine.
+ *
+ * Retourneert {} als er niks plausibels gevonden wordt.
+ */
+function extractAddressFromUrl(
+  url: string,
+  country: Country,
+): { city?: string; postalCode?: string } {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname.toLowerCase();
+  } catch {
+    return {};
+  }
+
+  const digits = country === "FR" || country === "DE" ? "5" : "4";
+  const numWord = new RegExp(`\\b(\\d{${digits}})[-_/]([a-z][a-z-]{2,})`, "i");
+  const wordNum = new RegExp(`\\b([a-z][a-z-]{2,})[-_/](\\d{${digits}})\\b`, "i");
+
+  let match = pathname.match(numWord);
+  if (match) {
+    return { postalCode: match[1], city: titleCase(match[2]!) };
+  }
+  match = pathname.match(wordNum);
+  if (match) {
+    return { postalCode: match[2], city: titleCase(match[1]!) };
+  }
+  return {};
+}
+
+function titleCase(slug: string): string {
+  return slug
+    .split("-")
+    .map((w) => (w.length > 0 ? w[0]!.toUpperCase() + w.slice(1) : ""))
+    .join(" ")
+    .trim();
 }
 
 function stripHtml(s: string): string {

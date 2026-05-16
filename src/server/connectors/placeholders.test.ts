@@ -105,26 +105,35 @@ describe("PermittedHtmlConnector (generic scraper)", () => {
     expect(r.issues.some((i) => i.includes("green"))).toBe(true);
   });
 
-  it("extracts individual property links, skipping category + agency pages", async () => {
+  it("extracts individual property links via id-marker / deep-path / long-slug heuristics", async () => {
     const indexHtml = `
       <html><head><title>Welkom bij makelaar</title></head>
       <body>
         <a href="/over-ons">Over ons</a>
-        <a href="/te-koop">Volledig aanbod</a>
+        <a href="/te-koop">Volledig aanbod (te kort)</a>
         <a href="/te-koop/huis-1">Categoriepagina (te kort)</a>
-        <a href="/te-koop/boerderij-lorraine-12345">Te koop · Boerderij in Lorraine</a>
-        <a href="/te-koop/grand-domaine-rural-pres-de-paris">Te koop · Grand Domaine</a>
-        <a href="/agence/makelaar-amsterdam-12345">Makelaarskantoor (op deny-list)</a>
+        <a href="/te-koop/ref-12345-boerderij-lorraine">Met ref-marker</a>
+        <a href="/te-koop/grand-domaine-rural-pres-de-rouen-paris">Lange slug (5 hyphens)</a>
+        <a href="/te-koop/huis/tournai-7500">City-index (gaat naar depth-2)</a>
+        <a href="/agence/makelaar-12345">Op deny-list</a>
         <a href="https://external.com/x">externe link</a>
-        <a href="mailto:foo@bar">e-mail</a>
+      </body></html>`;
+    const cityIndexHtml = `
+      <html><body>
+        <a href="/te-koop/ref-99876-prachtige-villa">Prachtige villa</a>
+        <a href="/agence/iets">deny-list ook hier</a>
       </body></html>`;
     const transport = new MockTransport({
       "https://example.com/": { body: indexHtml },
-      "https://example.com/te-koop/boerderij-lorraine-12345": {
-        body: `<html><head><title>Boerderij in Lorraine</title></head><body>...</body></html>`,
+      "https://example.com/te-koop/huis/tournai-7500": { body: cityIndexHtml },
+      "https://example.com/te-koop/ref-12345-boerderij-lorraine": {
+        body: `<html><head><title>Boerderij</title></head></html>`,
       },
-      "https://example.com/te-koop/grand-domaine-rural-pres-de-paris": {
-        body: `<html><head><title>Grand Domaine</title></head><body>...</body></html>`,
+      "https://example.com/te-koop/grand-domaine-rural-pres-de-rouen-paris": {
+        body: `<html><head><title>Grand Domaine</title></head></html>`,
+      },
+      "https://example.com/te-koop/ref-99876-prachtige-villa": {
+        body: `<html><head><title>Villa</title></head></html>`,
       },
     });
     const drafts = await c.fetchListings(
@@ -137,9 +146,12 @@ describe("PermittedHtmlConnector (generic scraper)", () => {
       null,
       { transport, rateLimiter: new NoopRateLimiter(), crawlJobId: "j1" },
     );
+    // Verwacht: 3 details — 2 direct van de homepage, 1 via depth-2 vanuit
+    // de city-index. Geen city-index zelf, geen deny-list paden.
     expect(drafts.map((d) => d.url).sort()).toEqual([
-      "https://example.com/te-koop/boerderij-lorraine-12345",
-      "https://example.com/te-koop/grand-domaine-rural-pres-de-paris",
+      "https://example.com/te-koop/grand-domaine-rural-pres-de-rouen-paris",
+      "https://example.com/te-koop/ref-12345-boerderij-lorraine",
+      "https://example.com/te-koop/ref-99876-prachtige-villa",
     ]);
   });
 });

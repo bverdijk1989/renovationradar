@@ -67,13 +67,22 @@ const PATH_DENY_LIST = [
 ];
 
 /**
- * Een property-pagina heeft ALMOST ALWAYS één van deze patterns:
- *   - Een numerieke ID van ≥3 cijfers ergens in het pad ("/chateau-12345")
- *   - Een slug met ≥3 hyphens ("/grand-domaine-pres-de-rouen")
- * Categoriepagina's zoals "/achat/maison" of "/te-koop" matchen niet.
+ * Een individuele property-pagina (in tegenstelling tot een
+ * categorie/city-index) heeft ALMOST ALWAYS één van deze patterns:
+ *   - Een expliciete property-marker als `ref-12345`, `property-1234`,
+ *     `annonce-9876`, `bien-43` (gebruikelijk bij FR/BE/DE makelaars)
+ *   - Een diep pad (5+ segmenten) — Century21 BE: `/nl/te-koop/huis/<city>/<ref>`
+ *   - Een lange slug met ≥4 hyphens — meestal volledige property-titels:
+ *     `/grand-domaine-rural-pres-de-rouen-12345`
+ *
+ * Doel: filter `/nl/te-koop/huis/tournai-7500` (city-index, 4 segments)
+ * weg uit het detail-bucket en stop 'm in het index-bucket zodat depth-2
+ * 'm één laag dieper verkent. Categorie-overzichten zoals `/achat/maison`
+ * matchen geen van deze patterns.
  */
-const PROPERTY_ID_RE = /\d{3,}/;
-const SLUG_RE = /\/[a-z0-9]+(?:-[a-z0-9]+){2,}/i;
+const ID_MARKER_RE = /\b(ref|id|property|prop|annonce|bien|haus|huis|maison|villa)[-_/]?\d{2,}/i;
+const DEEP_PATH_RE = /^\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/[^/]/;
+const LONG_SLUG_RE = /\/[a-z0-9]+(?:-[a-z0-9]+){4,}/i;
 
 const HREF_RE = /<a\b[^>]*\bhref\s*=\s*("([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/a>/gi;
 const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i;
@@ -134,9 +143,11 @@ export class PermittedHtmlConnector implements SourceConnector {
     const cfg = (source.connectorConfig ?? {}) as {
       listingPageUrl?: string;
       maxListings?: number;
+      maxIndexPages?: number;
     };
     const startUrl = cfg.listingPageUrl ?? source.website;
     const maxListings = Math.max(1, Math.min(500, cfg.maxListings ?? 50));
+    const maxIndexPages = Math.max(0, Math.min(20, cfg.maxIndexPages ?? 10));
 
     // 1. Fetch start page.
     const startRes = await ctx.transport.get(startUrl, {
@@ -147,14 +158,51 @@ export class PermittedHtmlConnector implements SourceConnector {
       throw new ParseError(`Lege/te korte response van ${startUrl}`);
     }
 
-    // 2. Extract candidate listing-page links.
+    // 2. Extract level-1 candidates.
+    //    `details` = URLs die direct op een individuele property-pagina lijken
+    //    `indexes` = URLs die op een tussenliggende lijst-/categoriepagina lijken
+    //                (Century21 BE: /nl/te-koop/huis/tournai-7500 → daarop staan
+    //                 echte property-refs)
     const baseUrl = new URL(startRes.url ?? startUrl);
-    const candidateUrls = extractListingLinks(startRes.body, baseUrl, maxListings);
+    const { details: detailUrls, indexes: indexUrls } = extractCandidateLinks(
+      startRes.body,
+      baseUrl,
+      maxListings,
+      maxIndexPages,
+    );
 
-    if (candidateUrls.size === 0) {
-      // Geen herkenbare listing-links gevonden. We sturen de start-page zelf
-      // wel mee als RawListing zodat normalisatie 'm kan inspecteren — beter
-      // dan een lege run.
+    // 3. Voor elke index-page één laag dieper: lever de detail-links die
+    //    daar staan. Dit is wat depth-2 toelevert. Per index-page rate-limit
+    //    we volgens dezelfde policy als detail-fetches.
+    for (const idxUrl of indexUrls) {
+      if (ctx.signal?.aborted) break;
+      if (detailUrls.size >= maxListings) break;
+      await ctx.rateLimiter.wait(source.id, source.rateLimitPerMinute ?? 30);
+      try {
+        const idxRes = await ctx.transport.get(idxUrl, {
+          signal: ctx.signal,
+          headers: source.userAgent
+            ? { "User-Agent": source.userAgent }
+            : undefined,
+        });
+        const moreDetails = extractCandidateLinks(
+          idxRes.body,
+          new URL(idxRes.url ?? idxUrl),
+          maxListings - detailUrls.size,
+          0, // depth-2 is hard genoeg; geen extra level
+        ).details;
+        for (const u of moreDetails) {
+          detailUrls.add(u);
+          if (detailUrls.size >= maxListings) break;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    // 4. Geen specifieke detail-links gevonden → fallback: lever de start-page
+    //    zelf als index_only zodat normalisatie tenminste iets te zien krijgt.
+    if (detailUrls.size === 0) {
       return [
         {
           externalId: null,
@@ -170,9 +218,9 @@ export class PermittedHtmlConnector implements SourceConnector {
       ];
     }
 
-    // 3. Fetch each detail page (rate-limited).
+    // 5. Fetch elke detail-page (rate-limited).
     const drafts: RawListingDraft[] = [];
-    for (const url of candidateUrls) {
+    for (const url of detailUrls) {
       if (ctx.signal?.aborted) break;
       await ctx.rateLimiter.wait(source.id, source.rateLimitPerMinute ?? 30);
       try {
@@ -208,28 +256,28 @@ export class PermittedHtmlConnector implements SourceConnector {
 // ---------------------------------------------------------------------------
 
 /**
- * Zoek <a href="..."> tags die naar een INDIVIDUELE property-pagina wijzen.
+ * Zoek <a href="..."> tags en categoriseer ze:
+ *   - `details` = URLs die individuele property-pagina's lijken (specifieke
+ *      ID/slug, geen tussenliggende index)
+ *   - `indexes` = URLs die naar een lijst-pagina wijzen (keyword match maar
+ *      generiek pad — bv. `/te-koop/huis/tournai-7500` toont alle huizen
+ *      per stad bij Century21 BE)
  *
- * Een URL telt mee als:
- *   1. Hij staat NIET op de path-deny-list (geen agency-index, blog, contact).
- *   2. Hij bevat een listing-keyword in pad (te-koop / à-vendre / etc.) OF
- *      de link-tekst zegt expliciet "te koop" / "à vendre" / etc.
- *   3. Hij heeft een property-pattern: een numerieke ID van ≥3 cijfers OF
- *      een slug met ≥3 hyphens. Zo verdwijnen `/achat/maison` (categorie),
- *      `/te-koop` (overzicht), `/agence/.../achat` (kantoor-pagina) etc.
- *
- * Same-host gehandhaafd; gededuped op canonical URL; gecapt op `max`.
+ * Beide gefilterd op de deny-list, same-host, deduplicated.
  */
-function extractListingLinks(
+function extractCandidateLinks(
   html: string,
   baseUrl: URL,
-  max: number,
-): Set<string> {
-  const out = new Set<string>();
+  maxDetails: number,
+  maxIndexes: number,
+): { details: Set<string>; indexes: Set<string> } {
+  const details = new Set<string>();
+  const indexes = new Set<string>();
   const seenHrefs = new Set<string>();
   let m: RegExpExecArray | null;
   HREF_RE.lastIndex = 0;
   while ((m = HREF_RE.exec(html)) !== null) {
+    if (details.size >= maxDetails && indexes.size >= maxIndexes) break;
     const href = (m[2] ?? m[3] ?? "").trim();
     const text = stripTags(m[4] ?? "").toLowerCase();
     if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("javascript:")) {
@@ -244,14 +292,12 @@ function extractListingLinks(
     } catch {
       continue;
     }
-    // Same-host enforcement: cross-domain links (zoals socials, advertenties)
-    // overslaan.
     if (abs.host !== baseUrl.host) continue;
 
     const path = abs.pathname;
     const pathAndQuery = `${path}${abs.search}`;
 
-    // Deny-list eerst — sneller falen op evident geen-listing paden.
+    // Deny-list eerst.
     if (PATH_DENY_LIST.some((re) => re.test(path))) continue;
 
     const matchesUrl = ALL_HINTS.test(pathAndQuery);
@@ -266,16 +312,21 @@ function extractListingLinks(
 
     if (!matchesUrl && !matchesText) continue;
 
-    // Specifiek-genoeg test: alleen URLs die er als een individuele
-    // property uitzien (numerieke ID OF lange slug).
-    const looksSpecific =
-      PROPERTY_ID_RE.test(path) || SLUG_RE.test(path);
-    if (!looksSpecific) continue;
+    // Classify: detail-page vs index-page (city-overzicht, agency-overzicht).
+    const isDetail =
+      ID_MARKER_RE.test(path) ||
+      DEEP_PATH_RE.test(path) ||
+      LONG_SLUG_RE.test(path);
 
-    out.add(abs.toString());
-    if (out.size >= max) break;
+    if (isDetail) {
+      if (details.size < maxDetails) details.add(abs.toString());
+    } else {
+      // Géén markers → index-pagina. Depth-2 crawl pakt 'm op als de caller
+      // dat heeft aangevraagd (maxIndexes > 0).
+      if (indexes.size < maxIndexes) indexes.add(abs.toString());
+    }
   }
-  return out;
+  return { details, indexes };
 }
 
 function extractTitle(html: string): string | null {
