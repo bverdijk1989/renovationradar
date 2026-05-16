@@ -158,8 +158,18 @@ export class SitemapConnector implements SourceConnector {
     const entries = splitBlocks(res.body, "url");
     const followLinks = cfg.followLinks === true;
 
+    // Early-quit guard voor followLinks mode: als N opeenvolgende
+    // city-pages 0 detail-links opleveren is de site waarschijnlijk
+    // JS-rendered en heeft verder doorgaan geen zin. Voorkomt 30-min
+    // hangs op portals als Century21 BE / Immoweb.
+    let consecutiveEmpty = 0;
+    const MAX_CONSECUTIVE_EMPTY = 5;
+
     for (const block of entries) {
       if (out.length >= maxEntries) break;
+      if (followLinks && consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY) {
+        break;
+      }
       const loc = readTag(block, "loc");
       if (!loc) continue;
       if (cfg.urlPattern && !loc.includes(cfg.urlPattern)) continue;
@@ -195,6 +205,13 @@ export class SitemapConnector implements SourceConnector {
             remaining,
             0, // depth-2; geen derde laag
           );
+
+          // Track empty city-pages voor early-quit (JS-rendered detection).
+          if (details.size === 0) {
+            consecutiveEmpty++;
+            continue;
+          }
+          consecutiveEmpty = 0;
 
           // Per detail-URL: fetch en bewaar HTML zodat normalize echte
           // velden kan extracten. Sommige sites zijn JS-rendered; voor
