@@ -8,19 +8,30 @@
  */
 
 // Listing-keyword patterns per taal. Geen "huur"/"location" — alleen "te koop"-varianten.
-const LISTING_LINK_HINTS_BY_LANG: Record<string, RegExp> = {
-  nl: /\/(te[-_]?koop|huis|woning|opknap|aanbod|aanbieding|chateau|chateaux)\b|\/koop\//i,
-  fr: /\/(a[-_]?vendre|vente|maison|propriete|propriété|annonce|chateau|château)\b/i,
-  de: /\/(zu[-_]?verkaufen|verkauf|haus|immobilie|kaufen|angebot)\b/i,
-  en: /\/(for[-_]?sale|house|property|listing|chateau)\b/i,
-};
+//
+// LET OP: het keyword MOET een volledig pad-segment zijn (tussen / en /),
+// niet een substring binnen een slug. Anders matcht /de-checklist-voor-een-huis
+// (blog) ook omdat "huis" toevallig in de slug staat. Met (?=\/|$|\?)
+// als look-ahead requirement matcht alleen /huis/, /te-koop/, etc.
+const SEGMENT_KEYWORDS = [
+  "te-koop", "te_koop", "tekoop", "koop",
+  "huis", "woning", "opknap", "aanbod", "aanbieding",
+  "chateau", "chateaux",
+  "a-vendre", "a_vendre", "vendre", "vente",
+  "maison", "propriete", "propriété", "annonce",
+  "zu-verkaufen", "zu_verkaufen", "verkaufen", "verkauf",
+  "haus", "immobilie", "kaufen", "angebot",
+  "for-sale", "for_sale", "house", "property", "listing",
+];
 
-const ALL_HINTS = new RegExp(
-  Object.values(LISTING_LINK_HINTS_BY_LANG)
-    .map((r) => r.source)
-    .join("|"),
+const SEGMENT_KEYWORD_RE = new RegExp(
+  `(?:^|\\/)(?:${SEGMENT_KEYWORDS.map(escapeRegex).join("|")})(?=\\/|$|\\?)`,
   "i",
 );
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Paden die NOOIT een individuele property zijn — agency-indexen,
@@ -110,7 +121,7 @@ export function extractCandidateLinks(
 
     if (PATH_DENY_LIST.some((re) => re.test(path))) continue;
 
-    const matchesUrl = ALL_HINTS.test(pathAndQuery);
+    const matchesUrl = SEGMENT_KEYWORD_RE.test(pathAndQuery);
     const matchesText =
       text.length >= 3 &&
       (text.includes("te koop") ||
