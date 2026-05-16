@@ -5,9 +5,12 @@ import { Play, Loader2, AlertCircle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type RunResult = {
-  totalSources: number;
-  succeeded: number;
-  failed: number;
+  started?: boolean;
+  mode?: string;
+  message?: string;
+  totalSources?: number;
+  succeeded?: number;
+  failed?: number;
   normalize?: { totalCandidates: number; succeeded: number };
   geocode?: { succeeded: number; skipped: number; failed: number };
 };
@@ -30,9 +33,10 @@ export function RunCrawlButton() {
   async function run() {
     if (
       !confirm(
-        "Crawl + normalize + geocode draaien voor ALLE active+green sources?\n\n" +
-          "Dit kan 5-30 minuten duren afhankelijk van het aantal actieve bronnen. " +
-          "Je kunt ondertussen de pagina openhouden — bij voltooiing zie je hier de cijfers.",
+        "Crawl + normalize + geocode starten voor ALLE active+green sources?\n\n" +
+          "De crawl draait op de achtergrond (5-30 min). Je krijgt direct een " +
+          "bevestiging — daarna mag je de tab sluiten. Resultaten verschijnen " +
+          "automatisch op /listings + /map zodra rijen binnenkomen.",
       )
     ) {
       return;
@@ -41,17 +45,34 @@ export function RunCrawlButton() {
     setResult(null);
     setBusy(true);
     try {
+      // Async mode (default voor admin-calls): API returnt direct met
+      // started:true. De crawl loopt server-side door.
       const res = await fetch("/api/jobs/run-all", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: "{}",
       });
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json?.error?.message ?? `Mislukt (HTTP ${res.status})`);
+      // Veilige response-parse: niet alles is JSON (nginx 504 = HTML).
+      const text = await res.text();
+      let json: RunResult | null = null;
+      try {
+        json = JSON.parse(text) as RunResult;
+      } catch {
+        // No-op — we tonen de raw text als error
       }
-      setResult(json as RunResult);
+      if (!res.ok) {
+        const msg =
+          json?.message ??
+          (text.length > 0 && text.length < 200
+            ? text
+            : `Mislukt (HTTP ${res.status})`);
+        throw new Error(msg);
+      }
+      if (!json) {
+        throw new Error("Onverwacht antwoord van de server");
+      }
+      setResult(json);
       startTransition(() => router.refresh());
     } catch (e) {
       setError((e as Error).message);
@@ -82,13 +103,15 @@ export function RunCrawlButton() {
         </p>
       ) : null}
       {result ? (
-        <p className="flex items-start gap-1 text-xs text-emerald-600">
-          <Check className="mt-0.5 h-3 w-3" />
-          {result.totalSources} sources, {result.succeeded} ok, {result.failed} failed
-          {result.normalize
-            ? ` · ${result.normalize.succeeded} normalized`
-            : ""}
-          {result.geocode ? ` · ${result.geocode.succeeded} geocoded` : ""}
+        <p className="flex max-w-xs items-start gap-1 text-xs text-emerald-600">
+          <Check className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>
+            {result.started
+              ? (result.message ?? "Crawl gestart op de achtergrond.")
+              : `${result.totalSources} sources, ${result.succeeded} ok, ${result.failed} failed${
+                  result.normalize ? ` · ${result.normalize.succeeded} normalized` : ""
+                }${result.geocode ? ` · ${result.geocode.succeeded} geocoded` : ""}`}
+          </span>
         </p>
       ) : null}
     </div>

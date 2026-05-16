@@ -11,9 +11,12 @@ export const dynamic = "force-dynamic";
  * Trigger crawl + normalize + geocode voor alle active+green sources.
  *
  * Twee auth-modi:
- *   - Bearer CRON_TOKEN: voor de systemd timer (geen cookie nodig)
+ *   - Bearer CRON_TOKEN: voor de systemd timer (`async=false`, sync run
+ *     met curl-timeout van 30 min)
  *   - Admin role via dev-cookie/header: voor de "Start nieuwe crawl"
- *     knop op /sources
+ *     knop op /sources. Default `async=true` zodat de UI direct een
+ *     response krijgt (nginx 60s timeout) en de crawl op de achtergrond
+ *     verder kan lopen.
  */
 export const POST = withApi(async (req: NextRequest) => {
   const cronToken = process.env.CRON_TOKEN;
@@ -36,6 +39,54 @@ export const POST = withApi(async (req: NextRequest) => {
     adminId = actor.user.id;
   }
 
+  const url = new URL(req.url);
+  // Default: cron = sync (krijgt result terug), UI = async (start +
+  // direct response zodat nginx niet 504't op de 60s read-timeout).
+  const asyncMode = url.searchParams.get("async") === "false"
+    ? false
+    : !validCronCall;
+
+  if (asyncMode) {
+    // Fire-and-forget. Het Next.js process houdt de Promise vast tot
+    // 'ie klaar is (long-lived `next start`); errors zijn zichtbaar
+    // in journalctl -u renovationradar.service.
+    runAllActiveSources()
+      .then((result) =>
+        auditLog({
+          userId: adminId,
+          action: "crawl_finished",
+          entityType: "crawl_job",
+          entityId: null,
+          meta: {
+            trigger: "admin-async",
+            sources: result.totalSources,
+            succeeded: result.succeeded,
+            failed: result.failed,
+            normalize: result.normalize,
+            geocode: result.geocode,
+          },
+        }).catch(() => {}),
+      )
+      .catch((err) => {
+        console.error("[run-all async] crawl failed:", err);
+      });
+    await auditLog({
+      req,
+      userId: adminId,
+      action: "crawl_started",
+      entityType: "crawl_job",
+      entityId: null,
+      meta: { trigger: "admin-async" },
+    });
+    return ok({
+      started: true,
+      mode: "async",
+      message:
+        "Crawl gestart in de achtergrond. Voortgang verschijnt vanzelf op /sources zodra rijen binnenkomen.",
+    });
+  }
+
+  // Sync mode (cron / explicit ?async=false)
   const result = await runAllActiveSources();
   await auditLog({
     req,
@@ -44,7 +95,7 @@ export const POST = withApi(async (req: NextRequest) => {
     entityType: "crawl_job",
     entityId: null,
     meta: {
-      trigger: validCronCall ? "cron" : "admin",
+      trigger: validCronCall ? "cron" : "admin-sync",
       sources: result.totalSources,
       succeeded: result.succeeded,
       failed: result.failed,
