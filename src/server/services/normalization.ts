@@ -303,20 +303,23 @@ function extractAddressFromUrl(
 
   // Pattern 2: city als segment direct na property-type keyword.
   // Property-type keywords (volledig path-segment, niet substring).
+  // BELANGRIJK: alleen "concrete" property-typen — geen woorden als
+  // "propriete"/"properiete" die op een LISTING-categorie wijzen
+  // (`/fr/properiete/a-vendre/maison/...` — pas `maison` is het echte
+  // type, niet "properiete").
   const PROPERTY_TYPE_KEYWORDS = new Set([
     "huis", "huizen", "woning", "woningen", "villa",
     "appartement", "appartements", "apartment",
-    "maison", "maisons", "propriete", "properiete", "propriétés",
+    "maison", "maisons",
     "haus", "häuser", "wohnung", "wohnungen",
-    "house", "houses", "property", "properties",
+    "house", "houses",
   ]);
   const segments = pathname.split("/").filter(Boolean);
-  for (let i = 0; i < segments.length - 1; i++) {
+  // Pak de LAATSTE match — die staat het dichtst bij het property-ID,
+  // dus het volgende segment is bijna altijd de city.
+  for (let i = segments.length - 2; i >= 0; i--) {
     if (PROPERTY_TYPE_KEYWORDS.has(segments[i]!)) {
       const candidate = segments[i + 1]!;
-      // Volgend segment is een city-slug ALS hij niet té veel cijfers
-      // bevat (dat zijn property-IDs). Echte cities zijn meestal alleen
-      // letters + hyphens, hooguit 1-2 cijfers (bv. "1e-jaarstraat").
       const digitCount = (candidate.match(/\d/g) ?? []).length;
       if (digitCount >= 3) continue;
       if (candidate.length < 3) continue;
