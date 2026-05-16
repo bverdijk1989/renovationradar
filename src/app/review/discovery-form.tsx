@@ -31,7 +31,7 @@ export function DiscoveryForm() {
   const [result, setResult] = useState<RunResult | null>(null);
 
   const [country, setCountry] = useState<"FR" | "BE" | "DE">("FR");
-  const [language, setLanguage] = useState<"fr" | "nl" | "de">("fr");
+  const [language, setLanguage] = useState<"fr" | "nl" | "de" | "en">("fr");
   const [region, setRegion] = useState("");
   const [urls, setUrls] = useState("");
 
@@ -90,6 +90,7 @@ export function DiscoveryForm() {
                 <SelectItem value="fr">Frans</SelectItem>
                 <SelectItem value="nl">Nederlands</SelectItem>
                 <SelectItem value="de">Duits</SelectItem>
+                <SelectItem value="en">Engels</SelectItem>
               </SelectContent>
             </Select>
           </div>
